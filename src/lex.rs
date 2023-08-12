@@ -103,9 +103,11 @@ mod tests {
     fn binding() {
         expect![[r#"
             (Word, "fix")
+            (BSlash, "\\")
             (Int, "0")
             (Word, "in")
             (Word, "fix")
+            (BSlash, "\\")
             (Int, "0")
             (Word, "in")
             (Word, "a")
@@ -186,11 +188,13 @@ mod tests {
         expect![[r#"
             (Word, "fix")
             (BSlash, "\\")
+            (BSlash, "\\")
             (Int, "1")
             (Dot, ".")
             (Int, "2")
             (Word, "in")
             (Word, "fix")
+            (BSlash, "\\")
             (BSlash, "\\")
             (Int, "0")
             (Dot, ".")

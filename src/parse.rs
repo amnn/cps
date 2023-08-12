@@ -7,8 +7,8 @@ pub(crate) enum LTerm {
     Free(String),
     Var(u32),
     Fix(Box<LTerm>, Box<LTerm>),
-    Lam(Box<LTerm>),
-    App(Box<LTerm>, Box<LTerm>),
+    Lam(u32, Box<LTerm>),
+    App(Box<LTerm>, Vec<LTerm>),
     Record(Vec<LTerm>),
     Select(Box<LTerm>, u32),
 }
@@ -24,7 +24,7 @@ pub(crate) struct Tokenizer<'b>(Peekable<Lexer<'b>>);
 /// Parses the following grammar
 ///
 /// decl        := "fix" decl "in" decl
-///              | "\" decl
+///              | "\"+ decl
 ///              | application
 ///
 /// application := application select
@@ -59,8 +59,8 @@ impl<'b> Tokenizer<'b> {
 
         match self.peek() {
             Some(&(T::BSlash, _)) => {
-                self.bump();
-                Ok(LT::Lam(Box::new(self.decl()?)))
+                let formals = self.count_formals();
+                Ok(LT::Lam(formals, Box::new(self.decl()?)))
             }
 
             Some(&(T::Word, "fix")) => {
@@ -75,13 +75,31 @@ impl<'b> Tokenizer<'b> {
         }
     }
 
+    fn count_formals(&mut self) -> u32 {
+        use Token as T;
+
+        let mut formals = 0;
+        while self.lexeme(T::BSlash, "\\").is_ok() {
+            formals += 1;
+        }
+
+        formals
+    }
+
     fn application(&mut self) -> Result<LTerm, Error<'b>> {
         use LTerm as LT;
-        let mut app = self.select()?;
+        let fun = self.select()?;
+
+        let mut actuals = vec![];
         while let Ok(select) = self.select() {
-            app = LT::App(Box::new(app), Box::new(select));
+            actuals.push(select);
         }
-        Ok(app)
+
+        Ok(if !actuals.is_empty() {
+            LT::App(Box::new(fun), actuals)
+        } else {
+            fun
+        })
     }
 
     fn select(&mut self) -> Result<LTerm, Error<'b>> {
@@ -198,8 +216,8 @@ impl fmt::Debug for LTerm {
             LTerm::App(f, x) => fmt.debug_tuple("App").field(f).field(x).finish(),
             LTerm::Select(tuple, ix) => fmt.debug_tuple("Select").field(tuple).field(ix).finish(),
 
-            LTerm::Lam(body) if fmt.alternate() => write!(fmt, "Lam({body:#?})"),
-            LTerm::Lam(body) => write!(fmt, "Lam({body:?})"),
+            LTerm::Lam(formals, body) if fmt.alternate() => write!(fmt, "Lam({formals}, {body:#?})"),
+            LTerm::Lam(formals, body) => write!(fmt, "Lam({formals}, {body:?})"),
 
             LTerm::Record(elems) if fmt.alternate() => write!(fmt, "Record({elems:#?})"),
             LTerm::Record(elems) => write!(fmt, "Record({elems:?})"),
@@ -247,9 +265,9 @@ mod tests {
         expect![[r#"
             Ok(
                 Fix(
-                    Var(0),
+                    Lam(1, Var(0)),
                     Fix(
-                        Var(0),
+                        Lam(1, Var(0)),
                         Free("a"),
                     ),
                 ),
@@ -263,11 +281,11 @@ mod tests {
         expect![[r#"
             Ok(
                 App(
-                    App(
-                        Free("a"),
+                    Free("a"),
+                    [
                         Free("b"),
-                    ),
-                    Free("c"),
+                        Free("c"),
+                    ],
                 ),
             )
         "#]]
@@ -306,17 +324,17 @@ mod tests {
         expect![[r#"
             Ok(
                 App(
-                    App(
-                        Free("a"),
+                    Free("a"),
+                    [
                         Select(
                             Free("b"),
                             2,
                         ),
-                    ),
-                    Select(
-                        Free("c"),
-                        3,
-                    ),
+                        Select(
+                            Free("c"),
+                            3,
+                        ),
+                    ],
                 ),
             )
         "#]]
@@ -351,26 +369,26 @@ mod tests {
         expect![[r#"
             Ok(
                 Fix(
-                    Lam(Select(
+                    Lam(2, Select(
                         Var(1),
                         2,
                     )),
                     Fix(
-                        Lam(Select(
+                        Lam(2, Select(
                             Var(0),
                             3,
                         )),
                         Record([
                             Free("x"),
                             App(
-                                App(
-                                    Var(1),
+                                Var(1),
+                                [
                                     Free("y"),
-                                ),
-                                Select(
-                                    Free("z"),
-                                    4,
-                                ),
+                                    Select(
+                                        Free("z"),
+                                        4,
+                                    ),
+                                ],
                             ),
                         ]),
                     ),

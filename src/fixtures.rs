@@ -5,8 +5,8 @@ a
 "#;
 
 pub(crate) const BINDING: &str = r#"
-fix 0 in
-fix 0 in
+fix \ 0 in
+fix \ 0 in
   a
 "#;
 
@@ -31,7 +31,7 @@ pub(crate) const RECORD_SELECT: &str = r#"
 "#;
 
 pub(crate) const COMPLICATED: &str = r#"
-fix \ 1.2 in
-fix \ 0.3 in
+fix \\ 1.2 in
+fix \\ 0.3 in
   [x, 1 y z.4]
 "#;
