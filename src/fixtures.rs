@@ -34,8 +34,22 @@ pub(crate) const RECORD_SELECT: &str = r#"
 [a.2, b.3, c.4]
 "#;
 
+pub(crate) const LAMBDA: &str = r#"
+\\\ 0 1 2
+"#;
+
 pub(crate) const COMPLICATED: &str = r#"
 fix \\ 1.2 in
 fix \\ 0.3 in
   [x, 1 y z.4]
+"#;
+
+pub(crate) const LOOP: &str = r#"
+fix \ 1 0.0 in 0
+"#;
+
+pub(crate) const CO_RECURSIVE: &str = r#"
+fix [ \ 1.1 0
+    , \ 1.0 0
+    ] in 0.0
 "#;

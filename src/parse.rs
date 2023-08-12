@@ -216,7 +216,9 @@ impl fmt::Debug for LTerm {
             LTerm::App(f, x) => fmt.debug_tuple("App").field(f).field(x).finish(),
             LTerm::Select(tuple, ix) => fmt.debug_tuple("Select").field(tuple).field(ix).finish(),
 
-            LTerm::Lam(formals, body) if fmt.alternate() => write!(fmt, "Lam({formals}, {body:#?})"),
+            LTerm::Lam(formals, body) if fmt.alternate() => {
+                write!(fmt, "Lam({formals}, {body:#?})")
+            }
             LTerm::Lam(formals, body) => write!(fmt, "Lam({formals}, {body:?})"),
 
             LTerm::Record(elems) if fmt.alternate() => write!(fmt, "Record({elems:#?})"),
@@ -375,6 +377,22 @@ mod tests {
     }
 
     #[test]
+    fn lambda() {
+        expect![[r#"
+            Ok(
+                Lam(3, App(
+                    Var(0),
+                    [
+                        Var(1),
+                        Var(2),
+                    ],
+                )),
+            )
+        "#]]
+        .assert_eq(&parse(LAMBDA));
+    }
+
+    #[test]
     fn complicated() {
         expect![[r#"
             Ok(
@@ -406,5 +424,61 @@ mod tests {
             )
         "#]]
         .assert_eq(&parse(COMPLICATED));
+    }
+
+    #[test]
+    fn loop_() {
+        expect![[r#"
+            Ok(
+                Fix(
+                    Lam(1, App(
+                        Var(1),
+                        [
+                            Select(
+                                Var(0),
+                                0,
+                            ),
+                        ],
+                    )),
+                    Var(0),
+                ),
+            )
+        "#]]
+        .assert_eq(&parse(LOOP));
+    }
+
+    #[test]
+    fn co_recursive() {
+        expect![[r#"
+            Ok(
+                Fix(
+                    Record([
+                        Lam(1, App(
+                            Select(
+                                Var(1),
+                                1,
+                            ),
+                            [
+                                Var(0),
+                            ],
+                        )),
+                        Lam(1, App(
+                            Select(
+                                Var(1),
+                                0,
+                            ),
+                            [
+                                Var(0),
+                            ],
+                        )),
+                    ]),
+                    Select(
+                        Var(0),
+                        0,
+                    ),
+                ),
+            )
+        "#]]
+        .assert_eq(&parse(CO_RECURSIVE));
     }
 }

@@ -197,6 +197,19 @@ mod tests {
     }
 
     #[test]
+    fn lambda() {
+        expect![[r#"
+            (BSlash, "\\")
+            (BSlash, "\\")
+            (BSlash, "\\")
+            (Int, "0")
+            (Int, "1")
+            (Int, "2")
+        "#]]
+        .assert_eq(&lex(LAMBDA));
+    }
+
+    #[test]
     fn complicated() {
         expect![[r#"
             (Word, "fix")
@@ -224,5 +237,45 @@ mod tests {
             (Ket, "]")
         "#]]
         .assert_eq(&lex(COMPLICATED));
+    }
+
+    #[test]
+    fn loop_() {
+        expect![[r#"
+            (Word, "fix")
+            (BSlash, "\\")
+            (Int, "1")
+            (Int, "0")
+            (Dot, ".")
+            (Int, "0")
+            (Word, "in")
+            (Int, "0")
+        "#]]
+        .assert_eq(&lex(LOOP));
+    }
+
+    #[test]
+    fn co_recursive() {
+        expect![[r#"
+            (Word, "fix")
+            (Bra, "[")
+            (BSlash, "\\")
+            (Int, "1")
+            (Dot, ".")
+            (Int, "1")
+            (Int, "0")
+            (Comma, ",")
+            (BSlash, "\\")
+            (Int, "1")
+            (Dot, ".")
+            (Int, "0")
+            (Int, "0")
+            (Ket, "]")
+            (Word, "in")
+            (Int, "0")
+            (Dot, ".")
+            (Int, "0")
+        "#]]
+        .assert_eq(&lex(CO_RECURSIVE));
     }
 }
