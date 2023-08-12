@@ -4,6 +4,10 @@ pub(crate) const VARIABLE: &str = r#"
 a
 "#;
 
+pub(crate) const COMMENT: &str = r#"
+a # a comment
+"#;
+
 pub(crate) const BINDING: &str = r#"
 fix \ 0 in
 fix \ 0 in

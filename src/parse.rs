@@ -261,6 +261,16 @@ mod tests {
     }
 
     #[test]
+    fn comment() {
+        expect![[r#"
+            Ok(
+                Free("a"),
+            )
+        "#]]
+        .assert_eq(&parse(COMMENT));
+    }
+
+    #[test]
     fn binding() {
         expect![[r#"
             Ok(

@@ -51,6 +51,11 @@ impl<'b> Iterator for Lexer<'b> {
 
     fn next(&mut self) -> Option<Self::Item> {
         self.eat(|c| c.is_whitespace());
+        if let Some((_, '#')) = self.cursor.peek() {
+            self.eat(|c| *c != '\n');
+        }
+
+        self.eat(|c| c.is_whitespace());
         let (ix, c) = self.cursor.next()?;
 
         match c {
@@ -97,6 +102,14 @@ mod tests {
             (Word, "a")
         "#]]
         .assert_eq(&lex(VARIABLE));
+    }
+
+    #[test]
+    fn comment() {
+        expect![[r#"
+            (Word, "a")
+        "#]]
+        .assert_eq(&lex(COMMENT));
     }
 
     #[test]
