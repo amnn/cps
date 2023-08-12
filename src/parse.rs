@@ -1,8 +1,8 @@
-use std::{iter::Peekable, str::FromStr};
+use std::{fmt, iter::Peekable, str::FromStr};
 
 use crate::lex::{Lexer, Token};
 
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Eq, PartialEq)]
 pub(crate) enum LTerm {
     Free(String),
     Var(u32),
@@ -137,8 +137,8 @@ impl<'b> Tokenizer<'b> {
                 None => return Err(Error::EOF),
                 Some(&(T::Ket, _)) => {
                     self.bump();
-                    return Ok(LT::Record(elems))
-                },
+                    return Ok(LT::Record(elems));
+                }
                 Some(&(tok, lex)) => {
                     if !delimited {
                         return Err(Error::Unexpected(tok, lex));
@@ -189,70 +189,194 @@ impl<'b> Tokenizer<'b> {
     }
 }
 
+impl fmt::Debug for LTerm {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            LTerm::Free(v) => write!(fmt, "Free({v:?})"),
+            LTerm::Var(v) => write!(fmt, "Var({v:?})"),
+            LTerm::Fix(bind, body) => fmt.debug_tuple("Fix").field(bind).field(body).finish(),
+            LTerm::App(f, x) => fmt.debug_tuple("App").field(f).field(x).finish(),
+            LTerm::Select(tuple, ix) => fmt.debug_tuple("Select").field(tuple).field(ix).finish(),
+
+            LTerm::Lam(body) if fmt.alternate() => write!(fmt, "Lam({body:#?})"),
+            LTerm::Lam(body) => write!(fmt, "Lam({body:?})"),
+
+            LTerm::Record(elems) if fmt.alternate() => write!(fmt, "Record({elems:#?})"),
+            LTerm::Record(elems) => write!(fmt, "Record({elems:?})"),
+        }
+    }
+}
+
 fn is_keyword(w: &str) -> bool {
     matches!(w, "fix" | "in")
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fixtures::*;
     use expect_test::expect;
 
     fn parse<'b>(buf: &'b str) -> String {
         let tokens = Lexer::new(buf);
-        format!("{:?}", Tokenizer::parse(tokens))
+        format!("{:#?}\n", Tokenizer::parse(tokens))
     }
 
     #[test]
     fn empty() {
-        expect!["Err(EOF)"].assert_eq(&parse(""));
+        expect![[r#"
+            Err(
+                EOF,
+            )
+        "#]]
+        .assert_eq(&parse(EMPTY));
     }
 
     #[test]
     fn variable() {
-        expect![[r#"Ok(Free("a"))"#]].assert_eq(&parse("a"));
+        expect![[r#"
+            Ok(
+                Free("a"),
+            )
+        "#]]
+        .assert_eq(&parse(VARIABLE));
     }
 
     #[test]
     fn binding() {
-        expect![[r#"Ok(Fix(Var(0), Fix(Var(0), Free("a"))))"#]].assert_eq(&parse(r#"
-          fix 0 in
-          fix 0 in a
-        "#))
+        expect![[r#"
+            Ok(
+                Fix(
+                    Var(0),
+                    Fix(
+                        Var(0),
+                        Free("a"),
+                    ),
+                ),
+            )
+        "#]]
+        .assert_eq(&parse(BINDING))
     }
 
     #[test]
-    fn application() {
-        expect![[r#"Ok(App(App(Free("a"), Free("b")), Free("c")))"#]].assert_eq(&parse("a b c"));
-    }
-
-    #[test]
-    fn apply_select() {
-        expect![[r#"Ok(App(App(Free("a"), Select(Free("b"), 2)), Select(Free("c"), 3)))"#]].assert_eq(&parse("a b.2 c.3"));
+    fn apply() {
+        expect![[r#"
+            Ok(
+                App(
+                    App(
+                        Free("a"),
+                        Free("b"),
+                    ),
+                    Free("c"),
+                ),
+            )
+        "#]]
+        .assert_eq(&parse(APPLY));
     }
 
     #[test]
     fn select() {
-        expect![[r#"Ok(Select(Free("a"), 2))"#]].assert_eq(&parse("a.2"));
+        expect![[r#"
+            Ok(
+                Select(
+                    Free("a"),
+                    2,
+                ),
+            )
+        "#]]
+        .assert_eq(&parse(SELECT));
     }
 
     #[test]
     fn record() {
-        expect![[r#"Ok(Record([Free("a"), Free("b"), Free("c")]))"#]].assert_eq(&parse("[a, b, c]"));
+        expect![[r#"
+            Ok(
+                Record([
+                    Free("a"),
+                    Free("b"),
+                    Free("c"),
+                ]),
+            )
+        "#]]
+        .assert_eq(&parse(RECORD));
+    }
+
+    #[test]
+    fn apply_select() {
+        expect![[r#"
+            Ok(
+                App(
+                    App(
+                        Free("a"),
+                        Select(
+                            Free("b"),
+                            2,
+                        ),
+                    ),
+                    Select(
+                        Free("c"),
+                        3,
+                    ),
+                ),
+            )
+        "#]]
+        .assert_eq(&parse(APPLY_SELECT));
     }
 
     #[test]
     fn record_select() {
-        expect![[r#"Ok(Record([Select(Free("a"), 2), Select(Free("b"), 3), Select(Free("c"), 4)]))"#]].assert_eq(&parse("[a.2, b.3, c.4]"));
+        expect![[r#"
+            Ok(
+                Record([
+                    Select(
+                        Free("a"),
+                        2,
+                    ),
+                    Select(
+                        Free("b"),
+                        3,
+                    ),
+                    Select(
+                        Free("c"),
+                        4,
+                    ),
+                ]),
+            )
+        "#]]
+        .assert_eq(&parse(RECORD_SELECT));
     }
 
     #[test]
     fn complicated() {
-        expect![[r#"Ok(Fix(Lam(Select(Var(1), 2)), Fix(Lam(Select(Var(0), 3)), Record([Free("x"), App(App(Var(1), Free("y")), Select(Free("z"), 4))]))))"#]].assert_eq(&parse(r#"
-            fix \ 1.2 in
-            fix \ 0.3 in
-              [x, 1 y z.4]
-        "#));
+        expect![[r#"
+            Ok(
+                Fix(
+                    Lam(Select(
+                        Var(1),
+                        2,
+                    )),
+                    Fix(
+                        Lam(Select(
+                            Var(0),
+                            3,
+                        )),
+                        Record([
+                            Free("x"),
+                            App(
+                                App(
+                                    Var(1),
+                                    Free("y"),
+                                ),
+                                Select(
+                                    Free("z"),
+                                    4,
+                                ),
+                            ),
+                        ]),
+                    ),
+                ),
+            )
+        "#]]
+        .assert_eq(&parse(COMPLICATED));
     }
 }
