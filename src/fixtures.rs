@@ -9,8 +9,8 @@ a # a comment
 "#;
 
 pub(crate) const BINDING: &str = r#"
-fix \ 0 in
-fix \ 0 in
+let \ 0 in
+let \ 0 in
   a
 "#;
 
@@ -39,17 +39,17 @@ pub(crate) const LAMBDA: &str = r#"
 "#;
 
 pub(crate) const COMPLICATED: &str = r#"
-fix \\ 1.2 in
-fix \\ 0.3 in
+let \\ 1.2 in
+let \\ 0.3 in
   [x, 1 y z.4]
 "#;
 
 pub(crate) const LOOP: &str = r#"
-fix \ 1 0.0 in 0
+let \ 1 0.0 in 0
 "#;
 
 pub(crate) const CO_RECURSIVE: &str = r#"
-fix [ \ 1.1 0
-    , \ 1.0 0
-    ] in 0.0
+let \ 1 0
+and \ 2 0
+in 1
 "#;

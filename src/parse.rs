@@ -2,15 +2,15 @@ use std::{fmt, iter::Peekable, str::FromStr};
 
 use crate::lex::{Lexer, Token};
 
-#[derive(Eq, PartialEq)]
-pub(crate) enum LTerm {
+#[derive(Eq, PartialEq, Clone)]
+pub(crate) enum AST {
     Free(String),
     Var(u32),
-    Fix(Box<LTerm>, Box<LTerm>),
-    Lam(u32, Box<LTerm>),
-    App(Box<LTerm>, Vec<LTerm>),
-    Record(Vec<LTerm>),
-    Select(Box<LTerm>, u32),
+    Let(Vec<(u32, AST)>, Box<AST>),
+    Lam(u32, Box<AST>),
+    App(Box<AST>, Vec<AST>),
+    Record(Vec<AST>),
+    Select(Box<AST>, u32),
 }
 
 #[derive(Debug)]
@@ -23,9 +23,14 @@ pub(crate) struct Tokenizer<'b>(Peekable<Lexer<'b>>);
 
 /// Parses the following grammar
 ///
-/// decl        := "fix" decl "in" decl
-///              | "\"+ decl
+/// decl        := "let" binds "in" decl
+///              | lambda
 ///              | application
+///
+/// binds       := lambda
+///              | lambda "and" binds
+///
+/// lambda      := "\"+ decl
 ///
 /// application := application select
 ///              | select
@@ -42,7 +47,7 @@ pub(crate) struct Tokenizer<'b>(Peekable<Lexer<'b>>);
 ///              | decl "," record
 ///
 impl<'b> Tokenizer<'b> {
-    pub(crate) fn parse(tokens: Lexer<'b>) -> Result<LTerm, Error<'b>> {
+    pub(crate) fn parse(tokens: Lexer<'b>) -> Result<AST, Error<'b>> {
         let mut parser = Self(tokens.peekable());
 
         let term = parser.decl()?;
@@ -53,41 +58,51 @@ impl<'b> Tokenizer<'b> {
         }
     }
 
-    fn decl(&mut self) -> Result<LTerm, Error<'b>> {
-        use LTerm as LT;
+    fn decl(&mut self) -> Result<AST, Error<'b>> {
         use Token as T;
 
         match self.peek() {
             Some(&(T::BSlash, _)) => {
-                let formals = self.count_formals();
-                Ok(LT::Lam(formals, Box::new(self.decl()?)))
+                let (formals, body) = self.lambda()?;
+                Ok(AST::Lam(formals, Box::new(body)))
             }
 
-            Some(&(T::Word, "fix")) => {
+            Some(&(T::Word, "let")) => {
                 self.bump();
-                let bind = self.decl()?;
+                let binds = self.binds()?;
                 self.lexeme(T::Word, "in")?;
                 let body = self.decl()?;
-                Ok(LT::Fix(Box::new(bind), Box::new(body)))
+                Ok(AST::Let(binds, Box::new(body)))
             }
 
             _ => self.application(),
         }
     }
 
-    fn count_formals(&mut self) -> u32 {
-        use Token as T;
-
-        let mut formals = 0;
-        while self.lexeme(T::BSlash, "\\").is_ok() {
-            formals += 1;
+    fn binds(&mut self) -> Result<Vec<(u32, AST)>, Error<'b>> {
+        let mut binds = vec![];
+        loop {
+            binds.push(self.lambda()?);
+            if !self.lexeme(Token::Word, "and").is_ok() {
+                break Ok(binds);
+            }
         }
-
-        formals
     }
 
-    fn application(&mut self) -> Result<LTerm, Error<'b>> {
-        use LTerm as LT;
+    fn lambda(&mut self) -> Result<(u32, AST), Error<'b>> {
+        use Token as T;
+        self.lexeme(T::BSlash, "\\")?;
+
+        let mut args = 1;
+        while self.lexeme(T::BSlash, "\\").is_ok() {
+            args += 1;
+        }
+
+        let body = self.decl()?;
+        Ok((args, body))
+    }
+
+    fn application(&mut self) -> Result<AST, Error<'b>> {
         let fun = self.select()?;
 
         let mut actuals = vec![];
@@ -96,26 +111,24 @@ impl<'b> Tokenizer<'b> {
         }
 
         Ok(if !actuals.is_empty() {
-            LT::App(Box::new(fun), actuals)
+            AST::App(Box::new(fun), actuals)
         } else {
             fun
         })
     }
 
-    fn select(&mut self) -> Result<LTerm, Error<'b>> {
-        use LTerm as LT;
+    fn select(&mut self) -> Result<AST, Error<'b>> {
         use Token as T;
 
         let mut select = self.atom()?;
         while self.lexeme(T::Dot, ".").is_ok() {
-            select = LT::Select(Box::new(select), self.read(T::Int)?);
+            select = AST::Select(Box::new(select), self.read(T::Int)?);
         }
 
         Ok(select)
     }
 
-    fn atom(&mut self) -> Result<LTerm, Error<'b>> {
-        use LTerm as LT;
+    fn atom(&mut self) -> Result<AST, Error<'b>> {
         use Token as T;
 
         match self.peek() {
@@ -135,17 +148,16 @@ impl<'b> Tokenizer<'b> {
 
             Some(&(T::Word, w)) if !is_keyword(w) => {
                 self.bump();
-                Ok(LT::Free(w.to_owned()))
+                Ok(AST::Free(w.to_owned()))
             }
 
-            Some(&(T::Int, _)) => Ok(LT::Var(self.read(T::Int)?)),
+            Some(&(T::Int, _)) => Ok(AST::Var(self.read(T::Int)?)),
 
             Some(&(tok, lex)) => Err(Error::Unexpected(tok, lex)),
         }
     }
 
-    fn record(&mut self) -> Result<LTerm, Error<'b>> {
-        use LTerm as LT;
+    fn record(&mut self) -> Result<AST, Error<'b>> {
         use Token as T;
 
         let mut elems = vec![];
@@ -155,7 +167,7 @@ impl<'b> Tokenizer<'b> {
                 None => return Err(Error::EOF),
                 Some(&(T::Ket, _)) => {
                     self.bump();
-                    return Ok(LT::Record(elems));
+                    return Ok(AST::Record(elems));
                 }
                 Some(&(tok, lex)) => {
                     if !delimited {
@@ -207,28 +219,34 @@ impl<'b> Tokenizer<'b> {
     }
 }
 
-impl fmt::Debug for LTerm {
+impl fmt::Debug for AST {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            LTerm::Free(v) => write!(fmt, "Free({v:?})"),
-            LTerm::Var(v) => write!(fmt, "Var({v:?})"),
-            LTerm::Fix(bind, body) => fmt.debug_tuple("Fix").field(bind).field(body).finish(),
-            LTerm::App(f, x) => fmt.debug_tuple("App").field(f).field(x).finish(),
-            LTerm::Select(tuple, ix) => fmt.debug_tuple("Select").field(tuple).field(ix).finish(),
+            AST::Free(v) => write!(fmt, "Free({v:?})"),
+            AST::Var(v) => write!(fmt, "Var({v:?})"),
+            AST::App(f, x) => fmt.debug_tuple("App").field(f).field(x).finish(),
+            AST::Select(tuple, ix) => fmt.debug_tuple("Select").field(tuple).field(ix).finish(),
 
-            LTerm::Lam(formals, body) if fmt.alternate() => {
-                write!(fmt, "Lam({formals}, {body:#?})")
+            AST::Let(binds, body) => {
+                let lams: Vec<_> = binds
+                    .iter()
+                    .map(|(f, b)| AST::Lam(*f, Box::new(b.clone())))
+                    .collect();
+
+                fmt.debug_tuple("Let").field(&lams).field(body).finish()
             }
-            LTerm::Lam(formals, body) => write!(fmt, "Lam({formals}, {body:?})"),
 
-            LTerm::Record(elems) if fmt.alternate() => write!(fmt, "Record({elems:#?})"),
-            LTerm::Record(elems) => write!(fmt, "Record({elems:?})"),
+            AST::Lam(f, b) if fmt.alternate() => write!(fmt, "Lam({f}, {b:#?})"),
+            AST::Lam(f, b) => write!(fmt, "Lam({f}, {b:?})"),
+
+            AST::Record(es) if fmt.alternate() => write!(fmt, "Record({es:#?})"),
+            AST::Record(es) => write!(fmt, "Record({es:?})"),
         }
     }
 }
 
 fn is_keyword(w: &str) -> bool {
-    matches!(w, "fix" | "in")
+    matches!(w, "let" | "and" | "in")
 }
 
 #[cfg(test)]
@@ -276,10 +294,14 @@ mod tests {
     fn binding() {
         expect![[r#"
             Ok(
-                Fix(
-                    Lam(1, Var(0)),
-                    Fix(
+                Let(
+                    [
                         Lam(1, Var(0)),
+                    ],
+                    Let(
+                        [
+                            Lam(1, Var(0)),
+                        ],
                         Free("a"),
                     ),
                 ),
@@ -396,16 +418,20 @@ mod tests {
     fn complicated() {
         expect![[r#"
             Ok(
-                Fix(
-                    Lam(2, Select(
-                        Var(1),
-                        2,
-                    )),
-                    Fix(
+                Let(
+                    [
                         Lam(2, Select(
-                            Var(0),
-                            3,
+                            Var(1),
+                            2,
                         )),
+                    ],
+                    Let(
+                        [
+                            Lam(2, Select(
+                                Var(0),
+                                3,
+                            )),
+                        ],
                         Record([
                             Free("x"),
                             App(
@@ -430,16 +456,18 @@ mod tests {
     fn loop_() {
         expect![[r#"
             Ok(
-                Fix(
-                    Lam(1, App(
-                        Var(1),
-                        [
-                            Select(
-                                Var(0),
-                                0,
-                            ),
-                        ],
-                    )),
+                Let(
+                    [
+                        Lam(1, App(
+                            Var(1),
+                            [
+                                Select(
+                                    Var(0),
+                                    0,
+                                ),
+                            ],
+                        )),
+                    ],
                     Var(0),
                 ),
             )
@@ -451,31 +479,22 @@ mod tests {
     fn co_recursive() {
         expect![[r#"
             Ok(
-                Fix(
-                    Record([
+                Let(
+                    [
                         Lam(1, App(
-                            Select(
-                                Var(1),
-                                1,
-                            ),
+                            Var(1),
                             [
                                 Var(0),
                             ],
                         )),
                         Lam(1, App(
-                            Select(
-                                Var(1),
-                                0,
-                            ),
+                            Var(2),
                             [
                                 Var(0),
                             ],
                         )),
-                    ]),
-                    Select(
-                        Var(0),
-                        0,
-                    ),
+                    ],
+                    Var(1),
                 ),
             )
         "#]]

@@ -115,11 +115,11 @@ mod tests {
     #[test]
     fn binding() {
         expect![[r#"
-            (Word, "fix")
+            (Word, "let")
             (BSlash, "\\")
             (Int, "0")
             (Word, "in")
-            (Word, "fix")
+            (Word, "let")
             (BSlash, "\\")
             (Int, "0")
             (Word, "in")
@@ -212,14 +212,14 @@ mod tests {
     #[test]
     fn complicated() {
         expect![[r#"
-            (Word, "fix")
+            (Word, "let")
             (BSlash, "\\")
             (BSlash, "\\")
             (Int, "1")
             (Dot, ".")
             (Int, "2")
             (Word, "in")
-            (Word, "fix")
+            (Word, "let")
             (BSlash, "\\")
             (BSlash, "\\")
             (Int, "0")
@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn loop_() {
         expect![[r#"
-            (Word, "fix")
+            (Word, "let")
             (BSlash, "\\")
             (Int, "1")
             (Int, "0")
@@ -257,24 +257,16 @@ mod tests {
     #[test]
     fn co_recursive() {
         expect![[r#"
-            (Word, "fix")
-            (Bra, "[")
+            (Word, "let")
             (BSlash, "\\")
             (Int, "1")
-            (Dot, ".")
-            (Int, "1")
             (Int, "0")
-            (Comma, ",")
+            (Word, "and")
             (BSlash, "\\")
-            (Int, "1")
-            (Dot, ".")
+            (Int, "2")
             (Int, "0")
-            (Int, "0")
-            (Ket, "]")
             (Word, "in")
-            (Int, "0")
-            (Dot, ".")
-            (Int, "0")
+            (Int, "1")
         "#]]
         .assert_eq(&lex(CO_RECURSIVE));
     }
