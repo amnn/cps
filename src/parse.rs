@@ -1,25 +1,26 @@
-use std::{fmt, iter::Peekable, str::FromStr};
+use std::{fmt, iter::Peekable};
 
 use crate::lex::{Lexer, Token};
 
 #[derive(Eq, PartialEq, Clone)]
-pub(crate) enum AST {
+pub(crate) enum Ast {
     Free(String),
     Var(u32),
-    Let(Vec<(u32, AST)>, Box<AST>),
-    Lam(u32, Box<AST>),
-    App(Box<AST>, Vec<AST>),
-    Record(Vec<AST>),
-    Select(Box<AST>, u32),
+    Let(Vec<(u32, Ast)>, Box<Ast>),
+    Lam(u32, Box<Ast>),
+    App(Box<Ast>, Vec<Ast>),
+    Record(Vec<Ast>),
+    Select(Box<Ast>, u32),
 }
 
 #[derive(Debug)]
 pub(crate) enum Error<'b> {
-    Unexpected(Token, &'b str),
-    EOF,
+    Unexpected(Token<'b>),
+    Eof,
 }
 
-pub(crate) struct Tokenizer<'b>(Peekable<Lexer<'b>>);
+#[derive(Debug)]
+pub(crate) struct Parser<'b>(Peekable<Lexer<'b>>);
 
 /// Parses the following grammar
 ///
@@ -46,55 +47,55 @@ pub(crate) struct Tokenizer<'b>(Peekable<Lexer<'b>>);
 ///              | decl
 ///              | decl "," record
 ///
-impl<'b> Tokenizer<'b> {
-    pub(crate) fn parse(tokens: Lexer<'b>) -> Result<AST, Error<'b>> {
+impl<'b> Parser<'b> {
+    pub(crate) fn parse(tokens: Lexer<'b>) -> Result<Ast, Error<'b>> {
         let mut parser = Self(tokens.peekable());
 
         let term = parser.decl()?;
-        if let Some(&(t, s)) = parser.peek() {
-            Err(Error::Unexpected(t, s))
+        if let Ok(t) = parser.peek() {
+            Err(Error::Unexpected(*t))
         } else {
             Ok(term)
         }
     }
 
-    fn decl(&mut self) -> Result<AST, Error<'b>> {
+    fn decl(&mut self) -> Result<Ast, Error<'b>> {
         use Token as T;
 
-        match self.peek() {
-            Some(&(T::BSlash, _)) => {
+        match self.peek()? {
+            T::BSlash => {
                 let (formals, body) = self.lambda()?;
-                Ok(AST::Lam(formals, Box::new(body)))
+                Ok(Ast::Lam(formals, Box::new(body)))
             }
 
-            Some(&(T::Word, "let")) => {
+            T::Word("let") => {
                 self.bump();
                 let binds = self.binds()?;
-                self.lexeme(T::Word, "in")?;
+                self.lexeme(T::Word("in"))?;
                 let body = self.decl()?;
-                Ok(AST::Let(binds, Box::new(body)))
+                Ok(Ast::Let(binds, Box::new(body)))
             }
 
             _ => self.application(),
         }
     }
 
-    fn binds(&mut self) -> Result<Vec<(u32, AST)>, Error<'b>> {
+    fn binds(&mut self) -> Result<Vec<(u32, Ast)>, Error<'b>> {
         let mut binds = vec![];
         loop {
             binds.push(self.lambda()?);
-            if !self.lexeme(Token::Word, "and").is_ok() {
+            if self.lexeme(Token::Word("and")).is_err() {
                 break Ok(binds);
             }
         }
     }
 
-    fn lambda(&mut self) -> Result<(u32, AST), Error<'b>> {
+    fn lambda(&mut self) -> Result<(u32, Ast), Error<'b>> {
         use Token as T;
-        self.lexeme(T::BSlash, "\\")?;
+        self.lexeme(T::BSlash)?;
 
         let mut args = 1;
-        while self.lexeme(T::BSlash, "\\").is_ok() {
+        while self.lexeme(T::BSlash).is_ok() {
             args += 1;
         }
 
@@ -102,7 +103,7 @@ impl<'b> Tokenizer<'b> {
         Ok((args, body))
     }
 
-    fn application(&mut self) -> Result<AST, Error<'b>> {
+    fn application(&mut self) -> Result<Ast, Error<'b>> {
         let fun = self.select()?;
 
         let mut actuals = vec![];
@@ -111,136 +112,126 @@ impl<'b> Tokenizer<'b> {
         }
 
         Ok(if !actuals.is_empty() {
-            AST::App(Box::new(fun), actuals)
+            Ast::App(Box::new(fun), actuals)
         } else {
             fun
         })
     }
 
-    fn select(&mut self) -> Result<AST, Error<'b>> {
+    fn select(&mut self) -> Result<Ast, Error<'b>> {
         use Token as T;
 
         let mut select = self.atom()?;
-        while self.lexeme(T::Dot, ".").is_ok() {
-            select = AST::Select(Box::new(select), self.read(T::Int)?);
+        while self.lexeme(T::Dot).is_ok() {
+            select = Ast::Select(Box::new(select), self.int()?);
         }
 
         Ok(select)
     }
 
-    fn atom(&mut self) -> Result<AST, Error<'b>> {
+    fn atom(&mut self) -> Result<Ast, Error<'b>> {
         use Token as T;
 
-        match self.peek() {
-            None => Err(Error::EOF),
-
-            Some(&(T::Bra, _)) => {
+        match self.peek()? {
+            T::Bra => {
                 self.bump();
                 self.record()
             }
 
-            Some(&(T::LPar, _)) => {
+            T::LPar => {
                 self.bump();
                 let inner = self.decl()?;
-                self.lexeme(T::RPar, ")")?;
+                self.lexeme(T::RPar)?;
                 Ok(inner)
             }
 
-            Some(&(T::Word, w)) if !is_keyword(w) => {
+            &T::Word(w) if !is_keyword(w) => {
                 self.bump();
-                Ok(AST::Free(w.to_owned()))
+                Ok(Ast::Free(w.to_owned()))
             }
 
-            Some(&(T::Int, _)) => Ok(AST::Var(self.read(T::Int)?)),
+            &T::Int(i) => {
+                self.bump();
+                Ok(Ast::Var(i))
+            }
 
-            Some(&(tok, lex)) => Err(Error::Unexpected(tok, lex)),
+            t => Err(Error::Unexpected(*t)),
         }
     }
 
-    fn record(&mut self) -> Result<AST, Error<'b>> {
+    fn record(&mut self) -> Result<Ast, Error<'b>> {
         use Token as T;
 
         let mut elems = vec![];
         let mut delimited = true;
         loop {
-            match self.peek() {
-                None => return Err(Error::EOF),
-                Some(&(T::Ket, _)) => {
-                    self.bump();
-                    return Ok(AST::Record(elems));
-                }
-                Some(&(tok, lex)) => {
-                    if !delimited {
-                        return Err(Error::Unexpected(tok, lex));
-                    } else {
-                        elems.push(self.decl()?);
-                        delimited = self.lexeme(T::Comma, ",").is_ok();
-                    }
-                }
+            let tok = self.peek()?;
+            if tok == &T::Ket {
+                self.bump();
+                return Ok(Ast::Record(elems));
+            }
+
+            if !delimited {
+                return Err(Error::Unexpected(*tok));
+            } else {
+                elems.push(self.decl()?);
+                delimited = self.lexeme(T::Comma).is_ok();
             }
         }
     }
 
-    fn peek(&mut self) -> Option<&(Token, &'b str)> {
-        self.0.peek()
+    fn peek(&mut self) -> Result<&Token<'b>, Error<'b>> {
+        self.0.peek().ok_or(Error::Eof)
     }
 
     fn bump(&mut self) {
         self.0.next();
     }
 
-    fn lexeme(&mut self, tok_: Token, lex_: &'b str) -> Result<(), Error<'b>> {
-        match self.peek() {
-            None => Err(Error::EOF),
-            Some(&(tok, lex)) => {
-                if tok_ == tok && lex_ == lex {
-                    self.bump();
-                    Ok(())
-                } else {
-                    Err(Error::Unexpected(tok, lex))
-                }
-            }
+    fn lexeme(&mut self, tok_: Token) -> Result<(), Error<'b>> {
+        let tok = self.peek()?;
+        if tok != &tok_ {
+            return Err(Error::Unexpected(*tok));
         }
+
+        self.bump();
+        Ok(())
     }
 
-    fn read<T: FromStr>(&mut self, tok_: Token) -> Result<T, Error<'b>> {
-        match self.peek() {
-            None => Err(Error::EOF),
-            Some(&(tok, lex)) => {
-                if tok_ != tok {
-                    Err(Error::Unexpected(tok, lex))
-                } else {
-                    let p = lex.parse().map_err(|_| Error::Unexpected(tok, lex))?;
-                    self.bump();
-                    Ok(p)
-                }
+    fn int(&mut self) -> Result<u32, Error<'b>> {
+        match self.peek()? {
+            &Token::Int(i) => {
+                self.bump();
+                Ok(i)
             }
+
+            tok => Err(Error::Unexpected(*tok)),
         }
     }
 }
 
-impl fmt::Debug for AST {
+impl fmt::Debug for Ast {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            AST::Free(v) => write!(fmt, "Free({v:?})"),
-            AST::Var(v) => write!(fmt, "Var({v:?})"),
-            AST::App(f, x) => fmt.debug_tuple("App").field(f).field(x).finish(),
-            AST::Select(tuple, ix) => fmt.debug_tuple("Select").field(tuple).field(ix).finish(),
+            Ast::Free(v) => write!(fmt, "Free({v:?})"),
+            Ast::Var(v) => write!(fmt, "Var({v:?})"),
+            Ast::App(f, x) => fmt.debug_tuple("App").field(f).field(x).finish(),
+            Ast::Select(tuple, ix) => fmt.debug_tuple("Select").field(tuple).field(ix).finish(),
 
-            AST::Let(binds, body) => {
+            Ast::Let(binds, body) => {
                 let lams: Vec<_> = binds
                     .iter()
-                    .map(|(f, b)| AST::Lam(*f, Box::new(b.clone())))
+                    .map(|(f, b)| Ast::Lam(*f, Box::new(b.clone())))
                     .collect();
 
                 fmt.debug_tuple("Let").field(&lams).field(body).finish()
             }
 
-            AST::Lam(f, b) if fmt.alternate() => write!(fmt, "Lam({f}, {b:#?})"),
-            AST::Lam(f, b) => write!(fmt, "Lam({f}, {b:?})"),
+            Ast::Lam(f, b) if fmt.alternate() => write!(fmt, "Lam({f}, {b:#?})"),
+            Ast::Lam(f, b) => write!(fmt, "Lam({f}, {b:?})"),
 
-            AST::Record(es) if fmt.alternate() => write!(fmt, "Record({es:#?})"),
-            AST::Record(es) => write!(fmt, "Record({es:?})"),
+            Ast::Record(es) if fmt.alternate() => write!(fmt, "Record({es:#?})"),
+            Ast::Record(es) => write!(fmt, "Record({es:?})"),
         }
     }
 }
@@ -257,14 +248,14 @@ mod tests {
 
     fn parse<'b>(buf: &'b str) -> String {
         let tokens = Lexer::new(buf);
-        format!("{:#?}\n", Tokenizer::parse(tokens))
+        format!("{:#?}\n", Parser::parse(tokens))
     }
 
     #[test]
     fn empty() {
         expect![[r#"
             Err(
-                EOF,
+                Eof,
             )
         "#]]
         .assert_eq(&parse(EMPTY));
