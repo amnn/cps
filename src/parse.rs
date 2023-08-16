@@ -236,6 +236,15 @@ impl fmt::Debug for Ast {
     }
 }
 
+impl<'b> fmt::Display for Error<'b> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Error::Unexpected(t) => write!(f, "Unexpected token: {t:?}"),
+            Error::Eof => write!(f, "Unexpected end-of-file."),
+        }
+    }
+}
+
 fn is_keyword(w: &str) -> bool {
     matches!(w, "let" | "and" | "in")
 }
