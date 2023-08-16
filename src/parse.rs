@@ -345,6 +345,31 @@ mod tests {
     }
 
     #[test]
+    fn apply_nested() {
+        expect![[r#"
+            Ok(
+                App(
+                    App(
+                        Free("a"),
+                        [
+                            Free("b"),
+                        ],
+                    ),
+                    [
+                        App(
+                            Free("c"),
+                            [
+                                Free("d"),
+                            ],
+                        ),
+                    ],
+                ),
+            )
+        "#]]
+        .assert_eq(&parse(APPLY_NESTED));
+    }
+
+    #[test]
     fn apply_select() {
         expect![[r#"
             Ok(
@@ -490,5 +515,25 @@ mod tests {
             )
         "#]]
         .assert_eq(&parse(CO_RECURSIVE));
+    }
+
+    #[test]
+    fn already_cps() {
+        expect![[r#"
+            Ok(
+                Let(
+                    [
+                        Lam(2, App(
+                            Var(0),
+                            [
+                                Var(1),
+                            ],
+                        )),
+                    ],
+                    Var(0),
+                ),
+            )
+        "#]]
+        .assert_eq(&parse(ALREADY_CPS));
     }
 }

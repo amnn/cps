@@ -26,6 +26,10 @@ pub(crate) const RECORD: &str = r#"
 [a, b, c]
 "#;
 
+pub(crate) const APPLY_NESTED: &str = r#"
+(a b) (c d)
+"#;
+
 pub(crate) const APPLY_SELECT: &str = r#"
 a b.2 c.3
 "#;
@@ -52,4 +56,8 @@ pub(crate) const CO_RECURSIVE: &str = r#"
 let \ 1 0
 and \ 2 0
 in 1
+"#;
+
+pub(crate) const ALREADY_CPS: &str = r#"
+let \\ 0 1 in 0
 "#;

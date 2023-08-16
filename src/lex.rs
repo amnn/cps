@@ -166,8 +166,23 @@ mod tests {
     }
 
     #[test]
+    fn apply_nested() {
+        expect![[r#"
+            LPar
+            Word("a")
+            Word("b")
+            RPar
+            LPar
+            Word("c")
+            Word("d")
+            RPar
+        "#]]
+        .assert_eq(&lex(APPLY_NESTED));
+    }
+
+    #[test]
     fn apply_select() {
-        let expect = expect![[r#"
+        expect![[r#"
             Word("a")
             Word("b")
             Dot
@@ -175,8 +190,8 @@ mod tests {
             Word("c")
             Dot
             Int(3)
-        "#]];
-        expect.assert_eq(&lex(APPLY_SELECT));
+        "#]]
+        .assert_eq(&lex(APPLY_SELECT));
     }
 
     #[test]
@@ -272,5 +287,19 @@ mod tests {
             Int(1)
         "#]]
         .assert_eq(&lex(CO_RECURSIVE));
+    }
+
+    #[test]
+    fn already_cps() {
+        expect![[r#"
+            Word("let")
+            BSlash
+            BSlash
+            Int(0)
+            Int(1)
+            Word("in")
+            Int(0)
+        "#]]
+        .assert_eq(&lex(ALREADY_CPS));
     }
 }
