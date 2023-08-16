@@ -5,7 +5,7 @@ pub(crate) enum Token<'b> {
     BSlash,        // "\"
     Comma,         // ","
     Dot,           // "."
-    Int(u32),      // integer literals
+    Int(usize),    // integer literals
     Word(&'b str), // identifiers
     Bra,           // "["
     Ket,           // "]"
@@ -68,7 +68,7 @@ impl<'b> Iterator for Lexer<'b> {
             ')' => Some(Token::RPar),
 
             n if n.is_numeric() => {
-                let int: u32 = self.gather(ix, |c| c.is_numeric()).parse().unwrap();
+                let int: usize = self.gather(ix, |c| c.is_numeric()).parse().unwrap();
                 Some(Token::Int(int))
             }
 

@@ -5,12 +5,12 @@ use crate::lex::{Lexer, Token};
 #[derive(Eq, PartialEq, Clone)]
 pub(crate) enum Ast {
     Free(String),
-    Var(u32),
-    Let(Vec<(u32, Ast)>, Box<Ast>),
-    Lam(u32, Box<Ast>),
+    Var(usize),
+    Let(Vec<(usize, Ast)>, Box<Ast>),
+    Lam(usize, Box<Ast>),
     App(Box<Ast>, Vec<Ast>),
     Record(Vec<Ast>),
-    Select(Box<Ast>, u32),
+    Select(Box<Ast>, usize),
 }
 
 #[derive(Debug)]
@@ -80,7 +80,7 @@ impl<'b> Parser<'b> {
         }
     }
 
-    fn binds(&mut self) -> Result<Vec<(u32, Ast)>, Error<'b>> {
+    fn binds(&mut self) -> Result<Vec<(usize, Ast)>, Error<'b>> {
         let mut binds = vec![];
         loop {
             binds.push(self.lambda()?);
@@ -90,7 +90,7 @@ impl<'b> Parser<'b> {
         }
     }
 
-    fn lambda(&mut self) -> Result<(u32, Ast), Error<'b>> {
+    fn lambda(&mut self) -> Result<(usize, Ast), Error<'b>> {
         use Token as T;
         self.lexeme(T::BSlash)?;
 
@@ -198,7 +198,7 @@ impl<'b> Parser<'b> {
         Ok(())
     }
 
-    fn int(&mut self) -> Result<u32, Error<'b>> {
+    fn int(&mut self) -> Result<usize, Error<'b>> {
         match self.peek()? {
             &Token::Int(i) => {
                 self.bump();
