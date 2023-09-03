@@ -51,13 +51,12 @@ impl<'b> Iterator for Lexer<'b> {
 
     fn next(&mut self) -> Option<Self::Item> {
         self.eat(|c| c.is_whitespace());
-        if let Some((_, '#')) = self.cursor.peek() {
+        while let Some((_, '#')) = self.cursor.peek() {
             self.eat(|c| *c != '\n');
+            self.eat(|c| c.is_whitespace());
         }
 
-        self.eat(|c| c.is_whitespace());
         let (ix, c) = self.cursor.next()?;
-
         match c {
             '\\' => Some(Token::BSlash),
             ',' => Some(Token::Comma),
@@ -113,6 +112,14 @@ mod tests {
             Word("a")
         "#]]
         .assert_eq(&lex(COMMENT));
+    }
+
+    #[test]
+    fn multi_comment() {
+        expect![[r#"
+            Word("b")
+        "#]]
+        .assert_eq(&lex(MULTI_COMMENT));
     }
 
     #[test]

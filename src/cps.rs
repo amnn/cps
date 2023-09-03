@@ -365,6 +365,40 @@ mod tests {
     }
 
     #[test]
+    fn comment() {
+        expect![[r#"
+            Ast(
+                [
+                    Free("HALT"),
+                    Free("a"),
+                ],
+                Var(1),
+                [
+                    Var(0),
+                ],
+            )
+        "#]]
+        .assert_eq(&cps(COMMENT));
+    }
+
+    #[test]
+    fn multi_comment() {
+        expect![[r#"
+            Ast(
+                [
+                    Free("HALT"),
+                    Free("b"),
+                ],
+                Var(1),
+                [
+                    Var(0),
+                ],
+            )
+        "#]]
+        .assert_eq(&cps(MULTI_COMMENT));
+    }
+
+    #[test]
     fn binding() {
         expect![[r#"
             Ast(

@@ -292,6 +292,16 @@ mod tests {
     }
 
     #[test]
+    fn multi_comment() {
+        expect![[r#"
+            Ok(
+                Free("b"),
+            )
+        "#]]
+        .assert_eq(&parse(MULTI_COMMENT));
+    }
+
+    #[test]
     fn binding() {
         expect![[r#"
             Ok(

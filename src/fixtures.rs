@@ -8,6 +8,12 @@ pub(crate) const COMMENT: &str = r#"
 a # a comment
 "#;
 
+pub(crate) const MULTI_COMMENT: &str = r#"
+# line 1
+# line 2
+b
+"#;
+
 pub(crate) const BINDING: &str = r#"
 let \ 0 in
 let \ 0 in
