@@ -2,13 +2,8 @@ use std::{iter::Peekable, str::CharIndices};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Token<'b> {
-    BSlash,        // "\"
-    Comma,         // ","
-    Dot,           // "."
     Int(usize),    // integer literals
     Word(&'b str), // identifiers
-    Bra,           // "["
-    Ket,           // "]"
     LPar,          // "("
     RPar,          // ")"
 }
@@ -27,10 +22,10 @@ impl<'b> Lexer<'b> {
         }
     }
 
-    fn eat(&mut self, pred: impl Fn(&char) -> bool) -> Option<usize> {
+    fn eat(&mut self, pred: impl Fn(char) -> bool) -> Option<usize> {
         loop {
             let (ix, c) = self.cursor.peek()?;
-            if pred(c) {
+            if pred(*c) {
                 self.cursor.next();
             } else {
                 return Some(*ix);
@@ -38,7 +33,7 @@ impl<'b> Lexer<'b> {
         }
     }
 
-    fn gather(&mut self, from: usize, pred: impl Fn(&char) -> bool) -> &'b str {
+    fn gather(&mut self, from: usize, pred: impl Fn(char) -> bool) -> &'b str {
         match self.eat(pred) {
             Some(to) => &self.buf[from..to],
             None => &self.buf[from..],
@@ -50,34 +45,39 @@ impl<'b> Iterator for Lexer<'b> {
     type Item = Token<'b>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.eat(|c| c.is_whitespace());
-        while let Some((_, '#')) = self.cursor.peek() {
-            self.eat(|c| *c != '\n');
-            self.eat(|c| c.is_whitespace());
+        self.eat(is_whitespace);
+        while let Some((_, ';')) = self.cursor.peek() {
+            self.eat(|c| c != '\n');
+            self.eat(is_whitespace);
         }
 
         let (ix, c) = self.cursor.next()?;
         match c {
-            '\\' => Some(Token::BSlash),
-            ',' => Some(Token::Comma),
-            '.' => Some(Token::Dot),
-            '[' => Some(Token::Bra),
-            ']' => Some(Token::Ket),
             '(' => Some(Token::LPar),
             ')' => Some(Token::RPar),
+
+            c if is_ident_start(c) => Some(Token::Word(self.gather(ix, is_ident_rest))),
 
             n if n.is_numeric() => {
                 let int: usize = self.gather(ix, |c| c.is_numeric()).parse().unwrap();
                 Some(Token::Int(int))
             }
 
-            c if c.is_ascii_alphabetic() || c == '_' => Some(Token::Word(
-                self.gather(ix, |c| c == &'_' || c.is_ascii_alphanumeric()),
-            )),
-
             _ => None,
         }
     }
+}
+
+fn is_whitespace(c: char) -> bool {
+    c.is_whitespace() || c == ','
+}
+
+fn is_ident_start(c: char) -> bool {
+    !c.is_whitespace() && !matches!(c, '(' | ')' | ';' | '0'..='9')
+}
+
+fn is_ident_rest(c: char) -> bool {
+    !c.is_whitespace() && !matches!(c, '(' | ')' | ';')
 }
 
 #[cfg(test)]
@@ -125,15 +125,21 @@ mod tests {
     #[test]
     fn binding() {
         expect![[r#"
+            LPar
             Word("let")
-            BSlash
+            LPar
+            Int(1)
             Int(0)
-            Word("in")
+            RPar
+            LPar
             Word("let")
-            BSlash
+            LPar
+            Int(1)
             Int(0)
-            Word("in")
+            RPar
             Word("a")
+            RPar
+            RPar
         "#]]
         .assert_eq(&lex(BINDING));
     }
@@ -141,9 +147,11 @@ mod tests {
     #[test]
     fn apply() {
         expect![[r#"
+            LPar
             Word("a")
             Word("b")
             Word("c")
+            RPar
         "#]]
         .assert_eq(&lex(APPLY));
     }
@@ -151,9 +159,11 @@ mod tests {
     #[test]
     fn select() {
         expect![[r#"
-            Word("a")
-            Dot
+            LPar
+            Word("select")
             Int(2)
+            Word("a")
+            RPar
         "#]]
         .assert_eq(&lex(SELECT));
     }
@@ -161,13 +171,12 @@ mod tests {
     #[test]
     fn record() {
         expect![[r#"
-            Bra
+            LPar
+            Word("record")
             Word("a")
-            Comma
             Word("b")
-            Comma
             Word("c")
-            Ket
+            RPar
         "#]]
         .assert_eq(&lex(RECORD));
     }
@@ -176,12 +185,14 @@ mod tests {
     fn apply_nested() {
         expect![[r#"
             LPar
+            LPar
             Word("a")
             Word("b")
             RPar
             LPar
             Word("c")
             Word("d")
+            RPar
             RPar
         "#]]
         .assert_eq(&lex(APPLY_NESTED));
@@ -190,13 +201,19 @@ mod tests {
     #[test]
     fn apply_select() {
         expect![[r#"
+            LPar
             Word("a")
-            Word("b")
-            Dot
+            LPar
+            Word("select")
             Int(2)
-            Word("c")
-            Dot
+            Word("b")
+            RPar
+            LPar
+            Word("select")
             Int(3)
+            Word("c")
+            RPar
+            RPar
         "#]]
         .assert_eq(&lex(APPLY_SELECT));
     }
@@ -204,19 +221,24 @@ mod tests {
     #[test]
     fn record_select() {
         expect![[r#"
-            Bra
-            Word("a")
-            Dot
+            LPar
+            Word("record")
+            LPar
+            Word("select")
             Int(2)
-            Comma
-            Word("b")
-            Dot
+            Word("a")
+            RPar
+            LPar
+            Word("select")
             Int(3)
-            Comma
-            Word("c")
-            Dot
+            Word("b")
+            RPar
+            LPar
+            Word("select")
             Int(4)
-            Ket
+            Word("c")
+            RPar
+            RPar
         "#]]
         .assert_eq(&lex(RECORD_SELECT));
     }
@@ -224,12 +246,17 @@ mod tests {
     #[test]
     fn lambda() {
         expect![[r#"
-            BSlash
-            BSlash
-            BSlash
+            LPar
+            Word("fn")
+            LPar
+            Int(3)
+            RPar
+            LPar
             Int(0)
             Int(1)
             Int(2)
+            RPar
+            RPar
         "#]]
         .assert_eq(&lex(LAMBDA));
     }
@@ -237,29 +264,41 @@ mod tests {
     #[test]
     fn complicated() {
         expect![[r#"
+            LPar
             Word("let")
-            BSlash
-            BSlash
-            Int(1)
-            Dot
+            LPar
             Int(2)
-            Word("in")
+            LPar
+            Word("select")
+            Int(2)
+            Int(1)
+            RPar
+            RPar
+            LPar
             Word("let")
-            BSlash
-            BSlash
-            Int(0)
-            Dot
+            LPar
+            Int(2)
+            LPar
+            Word("select")
             Int(3)
-            Word("in")
-            Bra
+            Int(0)
+            RPar
+            RPar
+            LPar
+            Word("record")
             Word("x")
-            Comma
+            LPar
             Int(1)
             Word("y")
-            Word("z")
-            Dot
+            LPar
+            Word("select")
             Int(4)
-            Ket
+            Word("z")
+            RPar
+            RPar
+            RPar
+            RPar
+            RPar
         "#]]
         .assert_eq(&lex(COMPLICATED));
     }
@@ -267,14 +306,21 @@ mod tests {
     #[test]
     fn loop_() {
         expect![[r#"
+            LPar
             Word("let")
-            BSlash
+            LPar
             Int(1)
+            LPar
+            Int(1)
+            LPar
+            Word("select")
             Int(0)
-            Dot
             Int(0)
-            Word("in")
+            RPar
+            RPar
+            RPar
             Int(0)
+            RPar
         "#]]
         .assert_eq(&lex(LOOP));
     }
@@ -282,16 +328,22 @@ mod tests {
     #[test]
     fn co_recursive() {
         expect![[r#"
+            LPar
             Word("let")
-            BSlash
+            LPar
+            Int(1)
+            LPar
             Int(1)
             Int(0)
-            Word("and")
-            BSlash
+            RPar
+            Int(1)
+            LPar
             Int(2)
             Int(0)
-            Word("in")
+            RPar
+            RPar
             Int(1)
+            RPar
         "#]]
         .assert_eq(&lex(CO_RECURSIVE));
     }
@@ -299,13 +351,17 @@ mod tests {
     #[test]
     fn already_cps() {
         expect![[r#"
+            LPar
             Word("let")
-            BSlash
-            BSlash
+            LPar
+            Int(2)
+            LPar
             Int(0)
             Int(1)
-            Word("in")
+            RPar
+            RPar
             Int(0)
+            RPar
         "#]]
         .assert_eq(&lex(ALREADY_CPS));
     }

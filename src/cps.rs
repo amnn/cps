@@ -196,7 +196,7 @@ impl Cps {
                 self.push(C::Record(vs.collect()))[0]
             }
 
-            P::Ast::Select(xs, ix) => {
+            P::Ast::Select(ix, xs) => {
                 let tuple = self.bind(*xs);
                 self.push(C::Select(self.refer(tuple), ix))[0]
             }

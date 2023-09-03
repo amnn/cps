@@ -10,7 +10,7 @@ pub(crate) enum Ast {
     Lam(usize, Box<Ast>),
     App(Box<Ast>, Vec<Ast>),
     Record(Vec<Ast>),
-    Select(Box<Ast>, usize),
+    Select(usize, Box<Ast>),
 }
 
 #[derive(Debug)]
@@ -24,165 +24,109 @@ pub(crate) struct Parser<'b>(Peekable<Lexer<'b>>);
 
 /// Parses the following grammar
 ///
-/// decl        := "let" binds "in" decl
-///              | lambda
-///              | application
+/// expr    ::= "(" "let" "(" binds ")" expr ")"
+///           | lambda
+///           | "(" "record" expr* ")"
+///           | "(" "select" <Int> expr ")"
+///           | "(" expr+ ")" ;; function application
+///           | <Int>         ;; local variables
+///           | <Word>        ;; free variables
 ///
-/// binds       := lambda
-///              | lambda "and" binds
+/// binds  ::= binds bind | ε
+/// bind   ::= <Int> expr
 ///
-/// lambda      := "\"+ decl
-///
-/// application := application select
-///              | select
-///
-/// select      := select "." <Int>
-///              | atom
-///
-/// atom        := "[" record "]"
-///              | "(" decl ")"
-///              | <Word>
-///
-/// record      := ε
-///              | decl
-///              | decl "," record
-///
+/// lambda ::= "(" "fn" "(" <Int> ")" expr ")"
 impl<'b> Parser<'b> {
     /// Entrypoint: Convert a token stream into an AST.
     pub(crate) fn parse(tokens: Lexer<'b>) -> Result<Ast, Error<'b>> {
         let mut parser = Self(tokens.peekable());
 
-        let term = parser.decl()?;
+        let ast = parser.expr()?;
         if let Ok(t) = parser.peek() {
             Err(Error::Unexpected(*t))
         } else {
-            Ok(term)
+            Ok(ast)
         }
     }
 
-    fn decl(&mut self) -> Result<Ast, Error<'b>> {
+    fn expr(&mut self) -> Result<Ast, Error<'b>> {
         use Token as T;
 
-        match self.peek()? {
-            T::BSlash => {
-                let (formals, body) = self.lambda()?;
-                Ok(Ast::Lam(formals, Box::new(body)))
-            }
+        match self.next()? {
+            T::Word(free) => Ok(Ast::Free(free.to_string())),
+            T::Int(local) => Ok(Ast::Var(local)),
+            T::LPar => self.compound(),
+            t => Err(Error::Unexpected(t))
+        }
+    }
 
+    fn compound(&mut self) -> Result<Ast, Error<'b>> {
+        use Token as T;
+        match self.peek()? {
             T::Word("let") => {
                 self.bump();
-                let binds = self.binds()?;
-                self.lexeme(T::Word("in"))?;
-                let body = self.decl()?;
-                Ok(Ast::Let(binds, Box::new(body)))
-            }
+                self.lexeme(T::LPar)?;
+                let binds = self.tail(|p| {
+                    let ix = p.int()?;
+                    let expr = p.expr()?;
+                    Ok((ix, expr))
+                })?;
 
-            _ => self.application(),
-        }
-    }
-
-    fn binds(&mut self) -> Result<Vec<(usize, Ast)>, Error<'b>> {
-        let mut binds = vec![];
-        loop {
-            binds.push(self.lambda()?);
-            if self.lexeme(Token::Word("and")).is_err() {
-                break Ok(binds);
-            }
-        }
-    }
-
-    fn lambda(&mut self) -> Result<(usize, Ast), Error<'b>> {
-        use Token as T;
-        self.lexeme(T::BSlash)?;
-
-        let mut args = 1;
-        while self.lexeme(T::BSlash).is_ok() {
-            args += 1;
-        }
-
-        let body = self.decl()?;
-        Ok((args, body))
-    }
-
-    fn application(&mut self) -> Result<Ast, Error<'b>> {
-        let fun = self.select()?;
-
-        let mut actuals = vec![];
-        while let Ok(select) = self.select() {
-            actuals.push(select);
-        }
-
-        Ok(if !actuals.is_empty() {
-            Ast::App(Box::new(fun), actuals)
-        } else {
-            fun
-        })
-    }
-
-    fn select(&mut self) -> Result<Ast, Error<'b>> {
-        use Token as T;
-
-        let mut select = self.atom()?;
-        while self.lexeme(T::Dot).is_ok() {
-            select = Ast::Select(Box::new(select), self.int()?);
-        }
-
-        Ok(select)
-    }
-
-    fn atom(&mut self) -> Result<Ast, Error<'b>> {
-        use Token as T;
-
-        match self.peek()? {
-            T::Bra => {
-                self.bump();
-                self.record()
-            }
-
-            T::LPar => {
-                self.bump();
-                let inner = self.decl()?;
+                let body  = self.expr()?;
                 self.lexeme(T::RPar)?;
-                Ok(inner)
-            }
+                Ok(Ast::Let(binds, Box::new(body)))
+            },
 
-            &T::Word(w) if !is_keyword(w) => {
+            T::Word("record") => {
                 self.bump();
-                Ok(Ast::Free(w.to_owned()))
-            }
+                Ok(Ast::Record(self.tail(|p| p.expr())?))
+            },
 
-            &T::Int(i) => {
+            T::Word("select") => {
                 self.bump();
-                Ok(Ast::Var(i))
+                let ix = self.int()?;
+                let expr = self.expr()?;
+                self.lexeme(T::RPar)?;
+                Ok(Ast::Select(ix, Box::new(expr)))
+            },
+
+            T::Word("fn") => {
+                self.bump();
+                self.lexeme(T::LPar)?;
+                let params = self.int()?;
+                self.lexeme(T::RPar)?;
+                let body = self.expr()?;
+                self.lexeme(T::RPar)?;
+                Ok(Ast::Lam(params, Box::new(body)))
             }
 
-            t => Err(Error::Unexpected(*t)),
+            _ => {
+                let fun = self.expr()?;
+                Ok(Ast::App(Box::new(fun), self.tail(|p| p.expr())?))
+            },
         }
     }
 
-    fn record(&mut self) -> Result<Ast, Error<'b>> {
+    fn tail<T, E>(&mut self, mut elem: E) -> Result<Vec<T>, Error<'b>>
+    where
+        E: FnMut(&mut Self) -> Result<T, Error<'b>>
+    {
         use Token as T;
-
         let mut elems = vec![];
-        let mut delimited = true;
-        loop {
-            let tok = self.peek()?;
-            if tok == &T::Ket {
-                self.bump();
-                return Ok(Ast::Record(elems));
-            }
-
-            if !delimited {
-                return Err(Error::Unexpected(*tok));
-            } else {
-                elems.push(self.decl()?);
-                delimited = self.lexeme(T::Comma).is_ok();
-            }
+        while self.peek()? != &T::RPar {
+            elems.push(elem(self)?);
         }
+
+        self.bump();
+        Ok(elems)
     }
 
     fn peek(&mut self) -> Result<&Token<'b>, Error<'b>> {
         self.0.peek().ok_or(Error::Eof)
+    }
+
+    fn next(&mut self) -> Result<Token<'b>, Error<'b>> {
+        self.0.next().ok_or(Error::Eof)
     }
 
     fn bump(&mut self) {
@@ -217,7 +161,7 @@ impl fmt::Debug for Ast {
             Ast::Free(v) => write!(fmt, "Free({v:?})"),
             Ast::Var(v) => write!(fmt, "Var({v:?})"),
             Ast::App(f, x) => fmt.debug_tuple("App").field(f).field(x).finish(),
-            Ast::Select(tuple, ix) => fmt.debug_tuple("Select").field(tuple).field(ix).finish(),
+            Ast::Select(ix, tuple) => fmt.debug_tuple("Select").field(ix).field(tuple).finish(),
 
             Ast::Let(binds, body) => {
                 let lams: Vec<_> = binds
@@ -244,10 +188,6 @@ impl<'b> fmt::Display for Error<'b> {
             Error::Eof => write!(f, "Unexpected end-of-file."),
         }
     }
-}
-
-fn is_keyword(w: &str) -> bool {
-    matches!(w, "let" | "and" | "in")
 }
 
 #[cfg(test)]
@@ -342,8 +282,8 @@ mod tests {
         expect![[r#"
             Ok(
                 Select(
-                    Free("a"),
                     2,
+                    Free("a"),
                 ),
             )
         "#]]
@@ -397,12 +337,12 @@ mod tests {
                     Free("a"),
                     [
                         Select(
-                            Free("b"),
                             2,
+                            Free("b"),
                         ),
                         Select(
-                            Free("c"),
                             3,
+                            Free("c"),
                         ),
                     ],
                 ),
@@ -417,16 +357,16 @@ mod tests {
             Ok(
                 Record([
                     Select(
-                        Free("a"),
                         2,
+                        Free("a"),
                     ),
                     Select(
-                        Free("b"),
                         3,
+                        Free("b"),
                     ),
                     Select(
-                        Free("c"),
                         4,
+                        Free("c"),
                     ),
                 ]),
             )
@@ -457,15 +397,15 @@ mod tests {
                 Let(
                     [
                         Lam(2, Select(
-                            Var(1),
                             2,
+                            Var(1),
                         )),
                     ],
                     Let(
                         [
                             Lam(2, Select(
-                                Var(0),
                                 3,
+                                Var(0),
                             )),
                         ],
                         Record([
@@ -475,8 +415,8 @@ mod tests {
                                 [
                                     Free("y"),
                                     Select(
-                                        Free("z"),
                                         4,
+                                        Free("z"),
                                     ),
                                 ],
                             ),
@@ -498,8 +438,8 @@ mod tests {
                             Var(1),
                             [
                                 Select(
-                                    Var(0),
                                     0,
+                                    Var(0),
                                 ),
                             ],
                         )),
