@@ -2,57 +2,103 @@ use std::{fmt, iter};
 
 use crate::parse as P;
 
+/// Variables are represented by de-Bruijn indices.  They are used to refer to both function
+/// parameters and locals/temporaries.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) struct Var(usize);
 
+/// Commands are the "right-hand side" of binders, they produce values that get bound to variables
+/// in the [Ast].
 #[derive(PartialEq, Eq)]
 pub(crate) enum Cmd {
+    /// Load a free/global variable.
     Free(String),
+
+    /// Bind co-recursive functions.  This command binds multiple values (as many as the lambdas it
+    /// binds) and they are bound within each lambda, and for the continuation of the [Ast].
     Fix(Vec<Lam>),
+
+    /// Construct a tuple.
     Record(Vec<Var>),
+
+    /// Select an element from a tuple.
     Select(Var, usize),
 }
 
+/// A lambda is defined by the number of parameters it has, and its body.
 #[derive(PartialEq, Eq)]
 pub(crate) struct Lam(usize, Ast);
 
+/// An AST contains a sequence of commands which bind temporaries, followed by a function
+/// application (the last two fields), either from a function call in the input AST, or a
+/// continuation call.
 #[derive(PartialEq, Eq, Debug)]
 pub(crate) struct Ast(Vec<Cmd>, Var, Vec<Var>);
 
 /// Bound variables are represented by an index counting down from the first binding (as opposed to
-/// Vars which is a de-Bruijn index and counts up from the last binding).
+/// Vars which is a de-Bruijn index and counts up from the last binding).  These are used to refer
+/// to a binding before it is known from where in the Ast it will be referred (and how many other
+/// bindings exist between this variable's binding and its reference).
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 struct BVar(usize);
 
 #[derive(Debug)]
 pub(crate) struct Cps {
+    /// Partially built functions, nested in successive lexical scopes in the contified AST.  New
+    /// commands are appended to the top-most frame, and frames are popped off the stack and
+    /// converted into `Lam`s when they have been completed.
     frames: Vec<Frame>,
+
+    /// A mapping from local variables in the input AST to bound variables in the contified AST
+    /// (used when contifying local variables in the input AST).
     frm_vars: Vec<BVar>,
 }
 
+/// Frames correspond to a function in the contified AST that has been partially built.
 #[derive(Debug)]
 struct Frame {
-    callee: Option<(BVar, Vec<BVar>)>,
+    /// If this frame is a continuation function, its caller is included here.
+    caller: Option<(BVar, Vec<BVar>)>,
+
+    /// Number of local variables in the input AST before entering this frame.
     frm_bp: usize,
+
+    /// Number of local variables in the contified AST before entering this frame.
     cps_bp: usize,
+
+    /// Top of the local variable stack in the contified AST, so far.
     cps_sp: usize,
+
+    /// Number of parameters in the contified AST (i.e. includes continuation parameters).
     params: usize,
+
+    /// Local commands being accumulated for the body of this function, so far.
     locals: Vec<Cmd>,
 }
 
 impl Cps {
+    /// Entrypoint: convert an input AST into a contified AST.
     pub(crate) fn convert(from: P::Ast) -> Ast {
         let mut cps = Cps {
             frames: vec![],
             frm_vars: vec![],
         };
 
+        // Introduce a special frame to hold a distinguished `HALT` free variable -- the "final"
+        // continuation.
         cps.enter(0, 0, None);
         let halt = cps.push(Cmd::Free("HALT".to_owned()))[0];
+
         cps.body(from, halt).1
     }
 
+    /// Create a contified lambda with body translated from AST `from`. `k` is the parameter
+    /// containing the continuation that the lambda should return to.  Assumes that the lambda's
+    /// frame has already been set-up, before `body` is called.
     fn body(&mut self, from: P::Ast, k: BVar) -> Lam {
+        // If the body is already a function application, then avoid creating a redundant
+        // continuation just to call `k` with the result of application: Use the function being
+        // called in `from` as the continuation.
         let (mut k, mut xs) = if let P::Ast::App(f, xs) = from {
             (
                 self.bind(*f),
@@ -65,6 +111,8 @@ impl Cps {
             (k, vec![self.bind(from)])
         };
 
+        // Translating `from` may have pushed multiple frames, keep exiting out of them as long as
+        // they have a caller, which means they are a continuation frame.
         loop {
             let frame = self.exit();
 
@@ -73,15 +121,15 @@ impl Cps {
             let vs: Vec<_> = xs.into_iter().map(|x| frame.refer(x)).collect();
 
             let Frame {
-                callee,
+                caller,
                 params,
                 locals,
                 ..
             } = frame;
 
             let mut prog = Lam(params, Ast(locals, kv, vs));
-            if let Some((f, mut ys)) = callee {
-                // This frame has a callee, so it is the continuation of some other function
+            if let Some((f, mut ys)) = caller {
+                // This frame has a caller, so it is the continuation of some other function
                 // application.  Bind the lambda to use as that continuation, and keep popping.
                 // Its param count also needs decrementing so that the slot reserved for the
                 // self-reference (introduced by the `Fix` command), is not double-counted.
@@ -96,6 +144,8 @@ impl Cps {
         }
     }
 
+    /// Translate `from`, accumulating the intermediate results in `self`.  Returns the bound
+    /// variable used to refer to the result corresponding to `from`.
     fn bind(&mut self, from: P::Ast) -> BVar {
         use Cmd as C;
         match from {
@@ -153,13 +203,15 @@ impl Cps {
         }
     }
 
+    /// Translate a lambda in the input AST into a contified lambda.
     fn lambda(&mut self, formals: usize, body: P::Ast) -> Lam {
-
         self.enter(formals, 1, None);
         let k = self.cps_var(formals);
         self.body(body, k)
     }
 
+    /// Translate a local variable in the input AST (given by its `de_bruijn` index) to the
+    /// corresponding bound variable in the contified AST.
     fn frm_var(&self, de_bruijn: usize) -> BVar {
         *self
             .frm_vars
@@ -167,18 +219,24 @@ impl Cps {
             .expect("ICE: de-bruijn out-of-bounds.")
     }
 
+    /// Get the bound variable corresponding to the `ix`-th local in the top frame.
     fn cps_var(&self, ix: usize) -> BVar {
         self.frames.last().expect("ICE: No frame.").cps_var(ix)
     }
 
+    // Translate a bound variable into a de-Bruijn index for the contified AST at the current
+    // position.  This variable is only valid as long as no more results are pushed.
     fn refer(&self, bvar: BVar) -> Var {
         self.frames.last().expect("ICE: No frame.").refer(bvar)
     }
 
+    /// The number of bindings in the contified AST.
     fn bindings(&self) -> usize {
         self.frames.last().map_or(0, |f| f.cps_sp)
     }
 
+    /// Push the command to the top-most frame.  This adds the command and also registers its
+    /// results as locals on the stack.
     fn push(&mut self, cmd: Cmd) -> Vec<BVar> {
         self.frames
             .last_mut()
@@ -186,7 +244,11 @@ impl Cps {
             .push(cmd)
     }
 
-    fn enter(&mut self, args: usize, extras: usize, callee: Option<(BVar, Vec<BVar>)>) {
+    /// Enter a new frame. `args` is the number of parameters in the input AST, `extras` are the
+    /// additional parameters introduced in the contified `AST` (e.g. for the continuation
+    /// parameter).  If the frame being entered is for a continuation, `caller` is the function
+    /// application that it is a continuation for.
+    fn enter(&mut self, args: usize, extras: usize, caller: Option<(BVar, Vec<BVar>)>) {
         let frm_bp = self.frm_vars.len();
         let cps_bp = self.bindings();
 
@@ -195,7 +257,7 @@ impl Cps {
         }
 
         self.frames.push(Frame {
-            callee,
+            caller,
             frm_bp,
             cps_bp,
             cps_sp: args + extras + cps_bp,

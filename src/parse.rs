@@ -48,6 +48,7 @@ pub(crate) struct Parser<'b>(Peekable<Lexer<'b>>);
 ///              | decl "," record
 ///
 impl<'b> Parser<'b> {
+    /// Entrypoint: Convert a token stream into an AST.
     pub(crate) fn parse(tokens: Lexer<'b>) -> Result<Ast, Error<'b>> {
         let mut parser = Self(tokens.peekable());
 
