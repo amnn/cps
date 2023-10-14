@@ -1,6 +1,6 @@
-use std::process::exit;
+use std::{collections::HashSet, process::exit};
 
-use clap::Parser as Clap;
+use clap::{Parser as Clap, ValueEnum};
 use clap_stdin::FileOrStdin;
 use cps::Cps;
 use lex::Lexer;
@@ -16,23 +16,31 @@ mod fixtures;
 #[derive(Clap)]
 #[command(author, version, about)]
 struct Args {
-    #[arg(long = "Xdump-lex", help = "Debug dump tokens from lexer.")]
-    dump_lex: bool,
-
-    #[arg(long = "Xdump-ast", help = "Debug dump AST, after parsing.")]
-    dump_ast: bool,
-
-    #[arg(long = "Xdump-cps", help = "Debug dump IR after CPS transform.")]
-    dump_cps: bool,
+    #[arg(
+        long = "Xdump",
+        help = "Debug dump after various phases of the compiler."
+    )]
+    dump: Vec<Phase>,
 
     input: FileOrStdin,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq, Hash, ValueEnum)]
+enum Phase {
+    #[value(name = "lex")]
+    Lexer,
+    #[value(name = "parse")]
+    Parser,
+    #[value(name = "cps")]
+    Cps,
+}
+
 fn main() {
     let args = Args::parse();
+    let debug_phases: HashSet<_> = args.dump.iter().copied().collect();
 
     let lex = Lexer::new(&args.input);
-    if args.dump_lex {
+    if debug_phases.contains(&Phase::Lexer) {
         println!("Tokens:");
         for token in lex.clone() {
             println!("{token:?}");
@@ -48,12 +56,12 @@ fn main() {
         }
     };
 
-    if args.dump_ast {
+    if debug_phases.contains(&Phase::Parser) {
         println!("AST: {ast:#?}\n");
     }
 
-    let cps = Cps::convert(ast);
-    if args.dump_cps {
+    let cps = Cps::convert(dbj);
+    if debug_phases.contains(&Phase::Cps) {
         println!("CPS: {cps:#?}\n");
     }
 }
