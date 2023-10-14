@@ -21,6 +21,8 @@ pub(crate) enum Error<'b> {
     Eof,
 }
 
+type Result<'b, T> = std::result::Result<T, Error<'b>>;
+
 #[derive(Debug)]
 pub(crate) struct Parser<'b>(Peekable<Lexer<'b>>);
 
@@ -39,7 +41,7 @@ pub(crate) struct Parser<'b>(Peekable<Lexer<'b>>);
 /// lambda ::= "(" "fn" "(" <Word>* ")" expr ")"
 impl<'b> Parser<'b> {
     /// Entrypoint: Convert a token stream into an AST.
-    pub(crate) fn parse(tokens: Lexer<'b>) -> Result<Ast, Error<'b>> {
+    pub(crate) fn parse(tokens: Lexer<'b>) -> Result<'b, Ast<'b>> {
         let mut parser = Self(tokens.peekable());
 
         let ast = parser.expr()?;
@@ -50,7 +52,7 @@ impl<'b> Parser<'b> {
         }
     }
 
-    fn expr(&mut self) -> Result<Ast<'b>, Error<'b>> {
+    fn expr(&mut self) -> Result<'b, Ast<'b>> {
         use Token as T;
 
         match self.next()? {
@@ -100,7 +102,7 @@ impl<'b> Parser<'b> {
     /// Parses a lambda form, assuming the opening paren has been seen (and consumed).
     ///
     /// compound_lambda ::= "fn" "(" <Word>* ")" expr ")"
-    fn compound_lambda(&mut self) -> Result<Lam<'b>, Error<'b>> {
+    fn compound_lambda(&mut self) -> Result<'b, Lam<'b>> {
         self.lexeme(Token::Word("fn"))?;
         self.lexeme(Token::LPar)?;
         let params = self.tail(Self::word)?;
@@ -109,9 +111,9 @@ impl<'b> Parser<'b> {
         Ok(Lam(params, body))
     }
 
-    fn tail<T, E>(&mut self, mut elem: E) -> Result<Vec<T>, Error<'b>>
+    fn tail<T, E>(&mut self, mut elem: E) -> Result<'b, Vec<T>>
     where
-        E: FnMut(&mut Self) -> Result<T, Error<'b>>,
+        E: FnMut(&mut Self) -> Result<'b, T>,
     {
         use Token as T;
         let mut elems = vec![];
@@ -123,11 +125,11 @@ impl<'b> Parser<'b> {
         Ok(elems)
     }
 
-    fn peek(&mut self) -> Result<&Token<'b>, Error<'b>> {
+    fn peek(&mut self) -> Result<'b, &Token<'b>> {
         self.0.peek().ok_or(Error::Eof)
     }
 
-    fn next(&mut self) -> Result<Token<'b>, Error<'b>> {
+    fn next(&mut self) -> Result<'b, Token<'b>> {
         self.0.next().ok_or(Error::Eof)
     }
 
@@ -135,7 +137,7 @@ impl<'b> Parser<'b> {
         self.0.next();
     }
 
-    fn lexeme(&mut self, tok_: Token) -> Result<(), Error<'b>> {
+    fn lexeme(&mut self, tok_: Token) -> Result<'b, ()> {
         let tok = self.peek()?;
         if tok != &tok_ {
             return Err(Error::Unexpected(*tok));
@@ -145,7 +147,7 @@ impl<'b> Parser<'b> {
         Ok(())
     }
 
-    fn word(&mut self) -> Result<&'b str, Error<'b>> {
+    fn word(&mut self) -> Result<'b, &'b str> {
         match self.peek()? {
             &Token::Word(w) => {
                 self.bump();
@@ -156,7 +158,7 @@ impl<'b> Parser<'b> {
         }
     }
 
-    fn int(&mut self) -> Result<usize, Error<'b>> {
+    fn int(&mut self) -> Result<'b, usize> {
         match self.peek()? {
             &Token::Int(i) => {
                 self.bump();
