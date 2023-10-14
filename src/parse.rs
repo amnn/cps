@@ -3,15 +3,17 @@ use std::{fmt, iter::Peekable};
 use crate::lex::{Lexer, Token};
 
 #[derive(Eq, PartialEq, Clone)]
-pub(crate) enum Ast {
-    Free(String),
-    Var(usize),
-    Let(Vec<(usize, Ast)>, Box<Ast>),
-    Lam(usize, Box<Ast>),
-    App(Box<Ast>, Vec<Ast>),
-    Record(Vec<Ast>),
-    Select(usize, Box<Ast>),
+pub(crate) enum Ast<'b> {
+    Var(&'b str),
+    Let(Vec<(&'b str, Lam<'b>)>, Box<Ast<'b>>),
+    Lam(Box<Lam<'b>>),
+    App(Box<Ast<'b>>, Vec<Ast<'b>>),
+    Record(Vec<Ast<'b>>),
+    Select(usize, Box<Ast<'b>>),
 }
+
+#[derive(Eq, PartialEq, Clone)]
+pub(crate) struct Lam<'b>(pub Vec<&'b str>, pub Ast<'b>);
 
 #[derive(Debug)]
 pub(crate) enum Error<'b> {
@@ -29,13 +31,12 @@ pub(crate) struct Parser<'b>(Peekable<Lexer<'b>>);
 ///           | "(" "record" expr* ")"
 ///           | "(" "select" <Int> expr ")"
 ///           | "(" expr+ ")" ;; function application
-///           | <Int>         ;; local variables
-///           | <Word>        ;; free variables
+///           | <Word>        ;; variables
 ///
 /// binds  ::= binds bind | ε
-/// bind   ::= <Int> expr
+/// bind   ::= <Word> lambda
 ///
-/// lambda ::= "(" "fn" "(" <Int> ")" expr ")"
+/// lambda ::= "(" "fn" "(" <Word>* ")" expr ")"
 impl<'b> Parser<'b> {
     /// Entrypoint: Convert a token stream into an AST.
     pub(crate) fn parse(tokens: Lexer<'b>) -> Result<Ast, Error<'b>> {
@@ -49,38 +50,35 @@ impl<'b> Parser<'b> {
         }
     }
 
-    fn expr(&mut self) -> Result<Ast, Error<'b>> {
+    fn expr(&mut self) -> Result<Ast<'b>, Error<'b>> {
         use Token as T;
 
         match self.next()? {
-            T::Word(free) => Ok(Ast::Free(free.to_string())),
-            T::Int(local) => Ok(Ast::Var(local)),
-            T::LPar => self.compound(),
-            t => Err(Error::Unexpected(t))
+            T::Word(name) => return Ok(Ast::Var(name)),
+            T::LPar => { /* fall through */ }
+            t => return Err(Error::Unexpected(t)),
         }
-    }
 
-    fn compound(&mut self) -> Result<Ast, Error<'b>> {
-        use Token as T;
         match self.peek()? {
             T::Word("let") => {
                 self.bump();
                 self.lexeme(T::LPar)?;
                 let binds = self.tail(|p| {
-                    let ix = p.int()?;
-                    let expr = p.expr()?;
-                    Ok((ix, expr))
+                    let name = p.word()?;
+                    p.lexeme(T::LPar)?;
+                    let lambda = p.compound_lambda()?;
+                    Ok((name, lambda))
                 })?;
 
-                let body  = self.expr()?;
+                let body = self.expr()?;
                 self.lexeme(T::RPar)?;
                 Ok(Ast::Let(binds, Box::new(body)))
-            },
+            }
 
             T::Word("record") => {
                 self.bump();
-                Ok(Ast::Record(self.tail(|p| p.expr())?))
-            },
+                Ok(Ast::Record(self.tail(Self::expr)?))
+            }
 
             T::Word("select") => {
                 self.bump();
@@ -88,28 +86,32 @@ impl<'b> Parser<'b> {
                 let expr = self.expr()?;
                 self.lexeme(T::RPar)?;
                 Ok(Ast::Select(ix, Box::new(expr)))
-            },
-
-            T::Word("fn") => {
-                self.bump();
-                self.lexeme(T::LPar)?;
-                let params = self.int()?;
-                self.lexeme(T::RPar)?;
-                let body = self.expr()?;
-                self.lexeme(T::RPar)?;
-                Ok(Ast::Lam(params, Box::new(body)))
             }
+
+            T::Word("fn") => Ok(Ast::Lam(Box::new(self.compound_lambda()?))),
 
             _ => {
                 let fun = self.expr()?;
-                Ok(Ast::App(Box::new(fun), self.tail(|p| p.expr())?))
-            },
+                Ok(Ast::App(Box::new(fun), self.tail(Self::expr)?))
+            }
         }
+    }
+
+    /// Parses a lambda form, assuming the opening paren has been seen (and consumed).
+    ///
+    /// compound_lambda ::= "fn" "(" <Word>* ")" expr ")"
+    fn compound_lambda(&mut self) -> Result<Lam<'b>, Error<'b>> {
+        self.lexeme(Token::Word("fn"))?;
+        self.lexeme(Token::LPar)?;
+        let params = self.tail(Self::word)?;
+        let body = self.expr()?;
+        self.lexeme(Token::RPar)?;
+        Ok(Lam(params, body))
     }
 
     fn tail<T, E>(&mut self, mut elem: E) -> Result<Vec<T>, Error<'b>>
     where
-        E: FnMut(&mut Self) -> Result<T, Error<'b>>
+        E: FnMut(&mut Self) -> Result<T, Error<'b>>,
     {
         use Token as T;
         let mut elems = vec![];
@@ -143,6 +145,17 @@ impl<'b> Parser<'b> {
         Ok(())
     }
 
+    fn word(&mut self) -> Result<&'b str, Error<'b>> {
+        match self.peek()? {
+            &Token::Word(w) => {
+                self.bump();
+                Ok(w)
+            }
+
+            tok => Err(Error::Unexpected(*tok)),
+        }
+    }
+
     fn int(&mut self) -> Result<usize, Error<'b>> {
         match self.peek()? {
             &Token::Int(i) => {
@@ -155,29 +168,53 @@ impl<'b> Parser<'b> {
     }
 }
 
-impl fmt::Debug for Ast {
+impl<'b> fmt::Debug for Ast<'b> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Ast::Free(v) => write!(fmt, "Free({v:?})"),
             Ast::Var(v) => write!(fmt, "Var({v:?})"),
-            Ast::App(f, x) => fmt.debug_tuple("App").field(f).field(x).finish(),
-            Ast::Select(ix, tuple) => fmt.debug_tuple("Select").field(ix).field(tuple).finish(),
 
             Ast::Let(binds, body) => {
-                let lams: Vec<_> = binds
-                    .iter()
-                    .map(|(f, b)| Ast::Lam(*f, Box::new(b.clone())))
-                    .collect();
+                write!(fmt, "Let(")?;
+                fmt.debug_map()
+                    .entries(binds.iter().map(|(n, l)| (*n, l)))
+                    .finish()?;
+                write!(fmt, ", ")?;
 
-                fmt.debug_tuple("Let").field(&lams).field(body).finish()
+                if fmt.alternate() {
+                    write!(fmt, "{body:#?}")?;
+                } else {
+                    write!(fmt, "{body:?}")?;
+                }
+
+                write!(fmt, ")")
             }
 
-            Ast::Lam(f, b) if fmt.alternate() => write!(fmt, "Lam({f}, {b:#?})"),
-            Ast::Lam(f, b) => write!(fmt, "Lam({f}, {b:?})"),
+            Ast::Lam(l) if fmt.alternate() => write!(fmt, "{l:#?}"),
+            Ast::Lam(l) => write!(fmt, "{l:?}"),
 
-            Ast::Record(es) if fmt.alternate() => write!(fmt, "Record({es:#?})"),
-            Ast::Record(es) => write!(fmt, "Record({es:?})"),
+            Ast::App(f, xs) => fmt.debug_tuple("App").field(f).field(xs).finish(),
+
+            Ast::Record(xs) if fmt.alternate() => write!(fmt, "Record({xs:#?})"),
+            Ast::Record(xs) => write!(fmt, "Record({xs:?})"),
+
+            Ast::Select(ix, tuple) if fmt.alternate() => write!(fmt, "Select({ix}, {tuple:#?})"),
+            Ast::Select(ix, tuple) => write!(fmt, "Select({ix}, {tuple:?})"),
         }
+    }
+}
+
+impl<'b> fmt::Debug for Lam<'b> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        let Lam(formals, body) = self;
+        write!(fmt, "Lam({formals:?}, ")?;
+
+        if fmt.alternate() {
+            write!(fmt, "{body:#?}")?;
+        } else {
+            write!(fmt, "{body:?}")?;
+        }
+
+        write!(fmt, ")")
     }
 }
 
@@ -215,7 +252,7 @@ mod tests {
     fn variable() {
         expect![[r#"
             Ok(
-                Free("a"),
+                Var("a"),
             )
         "#]]
         .assert_eq(&parse(VARIABLE));
@@ -225,7 +262,7 @@ mod tests {
     fn comment() {
         expect![[r#"
             Ok(
-                Free("a"),
+                Var("a"),
             )
         "#]]
         .assert_eq(&parse(COMMENT));
@@ -235,7 +272,7 @@ mod tests {
     fn multi_comment() {
         expect![[r#"
             Ok(
-                Free("b"),
+                Var("b"),
             )
         "#]]
         .assert_eq(&parse(MULTI_COMMENT));
@@ -245,20 +282,79 @@ mod tests {
     fn binding() {
         expect![[r#"
             Ok(
-                Let(
-                    [
-                        Lam(1, Var(0)),
-                    ],
-                    Let(
-                        [
-                            Lam(1, Var(0)),
-                        ],
-                        Free("a"),
-                    ),
-                ),
+                Let({
+                    "f": Lam(["x"], Var("x")),
+                }, Let({
+                    "g": Lam(["y"], Var("y")),
+                }, Var("a"))),
             )
         "#]]
         .assert_eq(&parse(BINDING))
+    }
+
+    #[test]
+    fn shadow() {
+        expect![[r#"
+            Ok(
+                Record([
+                    App(
+                        Var("f"),
+                        [
+                            Var("x"),
+                        ],
+                    ),
+                    Let({
+                        "f": Lam(["x"], App(
+                            Var("x"),
+                            [
+                                Var("f"),
+                            ],
+                        )),
+                        "g": Lam(["g"], App(
+                            Var("g"),
+                            [
+                                Var("x"),
+                            ],
+                        )),
+                    }, App(
+                        Var("f"),
+                        [
+                            Var("g"),
+                        ],
+                    )),
+                    App(
+                        Var("f"),
+                        [
+                            Var("x"),
+                        ],
+                    ),
+                ]),
+            )
+        "#]]
+        .assert_eq(&parse(SHADOW));
+    }
+
+    #[test]
+    fn let_shadow() {
+        expect![[r#"
+            Ok(
+                Let({
+                    "f": Lam(["x"], App(
+                        Var("f"),
+                        [
+                            Var("x"),
+                        ],
+                    )),
+                    "f": Lam(["f"], App(
+                        Var("f"),
+                        [
+                            Var("x"),
+                        ],
+                    )),
+                }, Var("f")),
+            )
+        "#]]
+        .assert_eq(&parse(LET_SHADOW));
     }
 
     #[test]
@@ -266,10 +362,10 @@ mod tests {
         expect![[r#"
             Ok(
                 App(
-                    Free("a"),
+                    Var("a"),
                     [
-                        Free("b"),
-                        Free("c"),
+                        Var("b"),
+                        Var("c"),
                     ],
                 ),
             )
@@ -281,10 +377,7 @@ mod tests {
     fn select() {
         expect![[r#"
             Ok(
-                Select(
-                    2,
-                    Free("a"),
-                ),
+                Select(2, Var("a")),
             )
         "#]]
         .assert_eq(&parse(SELECT));
@@ -295,9 +388,9 @@ mod tests {
         expect![[r#"
             Ok(
                 Record([
-                    Free("a"),
-                    Free("b"),
-                    Free("c"),
+                    Var("a"),
+                    Var("b"),
+                    Var("c"),
                 ]),
             )
         "#]]
@@ -310,16 +403,16 @@ mod tests {
             Ok(
                 App(
                     App(
-                        Free("a"),
+                        Var("a"),
                         [
-                            Free("b"),
+                            Var("b"),
                         ],
                     ),
                     [
                         App(
-                            Free("c"),
+                            Var("c"),
                             [
-                                Free("d"),
+                                Var("d"),
                             ],
                         ),
                     ],
@@ -334,16 +427,10 @@ mod tests {
         expect![[r#"
             Ok(
                 App(
-                    Free("a"),
+                    Var("a"),
                     [
-                        Select(
-                            2,
-                            Free("b"),
-                        ),
-                        Select(
-                            3,
-                            Free("c"),
-                        ),
+                        Select(2, Var("b")),
+                        Select(3, Var("c")),
                     ],
                 ),
             )
@@ -356,18 +443,9 @@ mod tests {
         expect![[r#"
             Ok(
                 Record([
-                    Select(
-                        2,
-                        Free("a"),
-                    ),
-                    Select(
-                        3,
-                        Free("b"),
-                    ),
-                    Select(
-                        4,
-                        Free("c"),
-                    ),
+                    Select(2, Var("a")),
+                    Select(3, Var("b")),
+                    Select(4, Var("c")),
                 ]),
             )
         "#]]
@@ -378,11 +456,11 @@ mod tests {
     fn lambda() {
         expect![[r#"
             Ok(
-                Lam(3, App(
-                    Var(0),
+                Lam(["x", "y", "z"], App(
+                    Var("z"),
                     [
-                        Var(1),
-                        Var(2),
+                        Var("y"),
+                        Var("x"),
                     ],
                 )),
             )
@@ -394,35 +472,20 @@ mod tests {
     fn complicated() {
         expect![[r#"
             Ok(
-                Let(
-                    [
-                        Lam(2, Select(
-                            2,
-                            Var(1),
-                        )),
-                    ],
-                    Let(
+                Let({
+                    "f": Lam(["x", "y"], Select(2, Var("x"))),
+                }, Let({
+                    "g": Lam(["x", "y"], Select(3, Var("y"))),
+                }, Record([
+                    Var("x"),
+                    App(
+                        Var("f"),
                         [
-                            Lam(2, Select(
-                                3,
-                                Var(0),
-                            )),
+                            Var("y"),
+                            Select(4, Var("z")),
                         ],
-                        Record([
-                            Free("x"),
-                            App(
-                                Var(1),
-                                [
-                                    Free("y"),
-                                    Select(
-                                        4,
-                                        Free("z"),
-                                    ),
-                                ],
-                            ),
-                        ]),
                     ),
-                ),
+                ]))),
             )
         "#]]
         .assert_eq(&parse(COMPLICATED));
@@ -432,20 +495,14 @@ mod tests {
     fn loop_() {
         expect![[r#"
             Ok(
-                Let(
-                    [
-                        Lam(1, App(
-                            Var(1),
-                            [
-                                Select(
-                                    0,
-                                    Var(0),
-                                ),
-                            ],
-                        )),
-                    ],
-                    Var(0),
-                ),
+                Let({
+                    "f": Lam(["x"], App(
+                        Var("f"),
+                        [
+                            Select(0, Var("x")),
+                        ],
+                    )),
+                }, Var("f")),
             )
         "#]]
         .assert_eq(&parse(LOOP));
@@ -455,23 +512,20 @@ mod tests {
     fn co_recursive() {
         expect![[r#"
             Ok(
-                Let(
-                    [
-                        Lam(1, App(
-                            Var(1),
-                            [
-                                Var(0),
-                            ],
-                        )),
-                        Lam(1, App(
-                            Var(2),
-                            [
-                                Var(0),
-                            ],
-                        )),
-                    ],
-                    Var(1),
-                ),
+                Let({
+                    "f": Lam(["x"], App(
+                        Var("g"),
+                        [
+                            Var("x"),
+                        ],
+                    )),
+                    "g": Lam(["x"], App(
+                        Var("f"),
+                        [
+                            Var("x"),
+                        ],
+                    )),
+                }, Var("f")),
             )
         "#]]
         .assert_eq(&parse(CO_RECURSIVE));
@@ -481,17 +535,14 @@ mod tests {
     fn already_cps() {
         expect![[r#"
             Ok(
-                Let(
-                    [
-                        Lam(2, App(
-                            Var(0),
-                            [
-                                Var(1),
-                            ],
-                        )),
-                    ],
-                    Var(0),
-                ),
+                Let({
+                    "f": Lam(["x", "k"], App(
+                        Var("k"),
+                        [
+                            Var("x"),
+                        ],
+                    )),
+                }, Var("f")),
             )
         "#]]
         .assert_eq(&parse(ALREADY_CPS));

@@ -128,20 +128,116 @@ mod tests {
             LPar
             Word("let")
             LPar
-            Int(1)
-            Int(0)
+            Word("f")
+            LPar
+            Word("fn")
+            LPar
+            Word("x")
+            RPar
+            Word("x")
+            RPar
             RPar
             LPar
             Word("let")
             LPar
-            Int(1)
-            Int(0)
+            Word("g")
+            LPar
+            Word("fn")
+            LPar
+            Word("y")
+            RPar
+            Word("y")
+            RPar
             RPar
             Word("a")
             RPar
             RPar
         "#]]
         .assert_eq(&lex(BINDING));
+    }
+
+    #[test]
+    fn shadow() {
+        expect![[r#"
+            LPar
+            Word("record")
+            LPar
+            Word("f")
+            Word("x")
+            RPar
+            LPar
+            Word("let")
+            LPar
+            Word("f")
+            LPar
+            Word("fn")
+            LPar
+            Word("x")
+            RPar
+            LPar
+            Word("x")
+            Word("f")
+            RPar
+            RPar
+            Word("g")
+            LPar
+            Word("fn")
+            LPar
+            Word("g")
+            RPar
+            LPar
+            Word("g")
+            Word("x")
+            RPar
+            RPar
+            RPar
+            LPar
+            Word("f")
+            Word("g")
+            RPar
+            RPar
+            LPar
+            Word("f")
+            Word("x")
+            RPar
+            RPar
+        "#]]
+        .assert_eq(&lex(SHADOW));
+    }
+
+    #[test]
+    fn let_shadow() {
+        expect![[r#"
+            LPar
+            Word("let")
+            LPar
+            Word("f")
+            LPar
+            Word("fn")
+            LPar
+            Word("x")
+            RPar
+            LPar
+            Word("f")
+            Word("x")
+            RPar
+            RPar
+            Word("f")
+            LPar
+            Word("fn")
+            LPar
+            Word("f")
+            RPar
+            LPar
+            Word("f")
+            Word("x")
+            RPar
+            RPar
+            RPar
+            Word("f")
+            RPar
+        "#]]
+        .assert_eq(&lex(LET_SHADOW));
     }
 
     #[test]
@@ -249,12 +345,14 @@ mod tests {
             LPar
             Word("fn")
             LPar
-            Int(3)
+            Word("x")
+            Word("y")
+            Word("z")
             RPar
             LPar
-            Int(0)
-            Int(1)
-            Int(2)
+            Word("z")
+            Word("y")
+            Word("x")
             RPar
             RPar
         "#]]
@@ -267,28 +365,42 @@ mod tests {
             LPar
             Word("let")
             LPar
-            Int(2)
+            Word("f")
+            LPar
+            Word("fn")
+            LPar
+            Word("x")
+            Word("y")
+            RPar
             LPar
             Word("select")
             Int(2)
-            Int(1)
+            Word("x")
+            RPar
             RPar
             RPar
             LPar
             Word("let")
             LPar
-            Int(2)
+            Word("g")
+            LPar
+            Word("fn")
+            LPar
+            Word("x")
+            Word("y")
+            RPar
             LPar
             Word("select")
             Int(3)
-            Int(0)
+            Word("y")
+            RPar
             RPar
             RPar
             LPar
             Word("record")
             Word("x")
             LPar
-            Int(1)
+            Word("f")
             Word("y")
             LPar
             Word("select")
@@ -309,17 +421,23 @@ mod tests {
             LPar
             Word("let")
             LPar
-            Int(1)
+            Word("f")
             LPar
-            Int(1)
+            Word("fn")
+            LPar
+            Word("x")
+            RPar
+            LPar
+            Word("f")
             LPar
             Word("select")
             Int(0)
-            Int(0)
+            Word("x")
             RPar
             RPar
             RPar
-            Int(0)
+            RPar
+            Word("f")
             RPar
         "#]]
         .assert_eq(&lex(LOOP));
@@ -331,18 +449,30 @@ mod tests {
             LPar
             Word("let")
             LPar
-            Int(1)
+            Word("f")
             LPar
-            Int(1)
-            Int(0)
-            RPar
-            Int(1)
+            Word("fn")
             LPar
-            Int(2)
-            Int(0)
+            Word("x")
+            RPar
+            LPar
+            Word("g")
+            Word("x")
             RPar
             RPar
-            Int(1)
+            Word("g")
+            LPar
+            Word("fn")
+            LPar
+            Word("x")
+            RPar
+            LPar
+            Word("f")
+            Word("x")
+            RPar
+            RPar
+            RPar
+            Word("f")
             RPar
         "#]]
         .assert_eq(&lex(CO_RECURSIVE));
@@ -354,13 +484,20 @@ mod tests {
             LPar
             Word("let")
             LPar
-            Int(2)
+            Word("f")
             LPar
-            Int(0)
-            Int(1)
+            Word("fn")
+            LPar
+            Word("x")
+            Word("k")
+            RPar
+            LPar
+            Word("k")
+            Word("x")
             RPar
             RPar
-            Int(0)
+            RPar
+            Word("f")
             RPar
         "#]]
         .assert_eq(&lex(ALREADY_CPS));

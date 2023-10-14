@@ -8,6 +8,7 @@ use parse::Parser;
 
 mod cps;
 mod lex;
+mod naming;
 mod parse;
 
 #[cfg(test)]
@@ -31,6 +32,8 @@ enum Phase {
     Lexer,
     #[value(name = "parse")]
     Parser,
+    #[value(name = "naming")]
+    Naming,
     #[value(name = "cps")]
     Cps,
 }
@@ -58,6 +61,11 @@ fn main() {
 
     if debug_phases.contains(&Phase::Parser) {
         println!("AST: {ast:#?}\n");
+    }
+
+    let dbj = naming::pass(ast);
+    if debug_phases.contains(&Phase::Naming) {
+        println!("Naming: {dbj:#?}\n");
     }
 
     let cps = Cps::convert(dbj);

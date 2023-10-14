@@ -1,6 +1,6 @@
 use std::{fmt, iter};
 
-use crate::parse as P;
+use crate::naming as N;
 
 /// Variables are represented by de-Bruijn indices.  They are used to refer to both function
 /// parameters and locals/temporaries.
@@ -78,7 +78,7 @@ struct Frame {
 
 impl Cps {
     /// Entrypoint: convert an input AST into a contified AST.
-    pub(crate) fn convert(from: P::Ast) -> Ast {
+    pub(crate) fn convert(from: N::Ast) -> Ast {
         let mut cps = Cps {
             frames: vec![],
             frm_vars: vec![],
@@ -95,11 +95,11 @@ impl Cps {
     /// Create a contified lambda with body translated from AST `from`. `k` is the parameter
     /// containing the continuation that the lambda should return to.  Assumes that the lambda's
     /// frame has already been set-up, before `body` is called.
-    fn body(&mut self, from: P::Ast, k: BVar) -> Lam {
+    fn body(&mut self, from: N::Ast, k: BVar) -> Lam {
         // If the body is already a function application, then avoid creating a redundant
         // continuation just to call `k` with the result of application: Use the function being
         // called in `from` as the continuation.
-        let (mut k, mut xs) = if let P::Ast::App(f, xs) = from {
+        let (mut k, mut xs) = if let N::Ast::App(f, xs) = from {
             (
                 self.bind(*f),
                 xs.into_iter()
@@ -146,20 +146,17 @@ impl Cps {
 
     /// Translate `from`, accumulating the intermediate results in `self`.  Returns the bound
     /// variable used to refer to the result corresponding to `from`.
-    fn bind(&mut self, from: P::Ast) -> BVar {
+    fn bind(&mut self, from: N::Ast) -> BVar {
         use Cmd as C;
         match from {
-            P::Ast::Free(x) => self.push(C::Free(x))[0],
-            P::Ast::Var(ix) => self.frm_var(ix),
+            N::Ast::Free(x) => self.push(C::Free(x.to_string()))[0],
+            N::Ast::Var(ix) => self.frm_var(ix),
 
-            P::Ast::Let(binds, body) => {
+            N::Ast::Let(binds, body) => {
                 // self-bindings
                 self.enter(binds.len(), 0, None);
 
-                let functions: Vec<_> = binds
-                    .into_iter()
-                    .map(|(formals, body)| self.lambda(formals, body))
-                    .collect();
+                let functions: Vec<_> = binds.into_iter().map(|l| self.lambda(l)).collect();
 
                 self.exit();
 
@@ -170,16 +167,16 @@ impl Cps {
                 self.bind(*body)
             }
 
-            P::Ast::Lam(formals, body) => {
+            N::Ast::Lam(l) => {
                 // Dummy scope, for the lambda's self-reference.
                 self.enter(0, 1, None);
-                let function = self.lambda(formals, *body);
+                let function = self.lambda(*l);
                 self.exit();
 
                 self.push(C::Fix(vec![function]))[0]
             }
 
-            P::Ast::App(f, xs) => {
+            N::Ast::App(f, xs) => {
                 let f = self.bind(*f);
                 let vs: Vec<_> = xs.into_iter().map(|x| self.bind(x)).collect();
 
@@ -190,13 +187,13 @@ impl Cps {
                 self.cps_var(1)
             }
 
-            P::Ast::Record(xs) => {
+            N::Ast::Record(xs) => {
                 let vs: Vec<_> = xs.into_iter().map(|x| self.bind(x)).collect();
                 let vs = vs.into_iter().map(|v| self.refer(v));
                 self.push(C::Record(vs.collect()))[0]
             }
 
-            P::Ast::Select(ix, xs) => {
+            N::Ast::Select(ix, xs) => {
                 let tuple = self.bind(*xs);
                 self.push(C::Select(self.refer(tuple), ix))[0]
             }
@@ -204,7 +201,8 @@ impl Cps {
     }
 
     /// Translate a lambda in the input AST into a contified lambda.
-    fn lambda(&mut self, formals: usize, body: P::Ast) -> Lam {
+    fn lambda(&mut self, l: N::Lam) -> Lam {
+        let N::Lam(formals, body) = l;
         self.enter(formals, 1, None);
         let k = self.cps_var(formals);
         self.body(body, k)
@@ -335,16 +333,17 @@ impl fmt::Debug for Lam {
 #[cfg(test)]
 mod tests {
     use crate::fixtures::*;
-    use crate::{lex::Lexer, parse::Parser};
+    use crate::{lex::Lexer, naming, parse::Parser};
 
     use super::*;
     use expect_test::expect;
 
     fn cps<'b>(buf: &'b str) -> String {
         let tokens = Lexer::new(buf);
-        let lterm = Parser::parse(tokens).expect("parsing should succeed");
-        let cterm = Cps::convert(lterm);
-        format!("{cterm:#?}\n")
+        let pexpr = Parser::parse(tokens).expect("parsing should succeed");
+        let nexpr = naming::pass(pexpr);
+        let cexpr = Cps::convert(nexpr);
+        format!("{cexpr:#?}\n")
     }
 
     #[test]
@@ -431,6 +430,120 @@ mod tests {
             )
         "#]]
         .assert_eq(&cps(BINDING));
+    }
+
+    #[test]
+    fn shadow() {
+        expect![[r#"
+            Ast(
+                [
+                    Free("HALT"),
+                    Free("f"),
+                    Free("x"),
+                    Fix([
+                        Lam(1, Ast(
+                            [
+                                Fix([
+                                    Lam(2, Ast(
+                                        [],
+                                        Var(1),
+                                        [
+                                            Var(3),
+                                            Var(0),
+                                        ],
+                                    )),
+                                    Lam(2, Ast(
+                                        [
+                                            Free("x"),
+                                        ],
+                                        Var(2),
+                                        [
+                                            Var(0),
+                                            Var(1),
+                                        ],
+                                    )),
+                                ]),
+                                Fix([
+                                    Lam(1, Ast(
+                                        [
+                                            Free("f"),
+                                            Free("x"),
+                                            Fix([
+                                                Lam(1, Ast(
+                                                    [
+                                                        Record([
+                                                            Var(8),
+                                                            Var(4),
+                                                            Var(0),
+                                                        ]),
+                                                    ],
+                                                    Var(13),
+                                                    [
+                                                        Var(0),
+                                                    ],
+                                                )),
+                                            ]),
+                                        ],
+                                        Var(2),
+                                        [
+                                            Var(1),
+                                            Var(0),
+                                        ],
+                                    )),
+                                ]),
+                            ],
+                            Var(2),
+                            [
+                                Var(1),
+                                Var(0),
+                            ],
+                        )),
+                    ]),
+                ],
+                Var(2),
+                [
+                    Var(1),
+                    Var(0),
+                ],
+            )
+        "#]]
+        .assert_eq(&cps(SHADOW));
+    }
+
+    #[test]
+    fn let_shadow() {
+        expect![[r#"
+            Ast(
+                [
+                    Free("HALT"),
+                    Fix([
+                        Lam(2, Ast(
+                            [],
+                            Var(2),
+                            [
+                                Var(1),
+                                Var(0),
+                            ],
+                        )),
+                        Lam(2, Ast(
+                            [
+                                Free("x"),
+                            ],
+                            Var(2),
+                            [
+                                Var(0),
+                                Var(1),
+                            ],
+                        )),
+                    ]),
+                ],
+                Var(2),
+                [
+                    Var(0),
+                ],
+            )
+        "#]]
+        .assert_eq(&cps(LET_SHADOW));
     }
 
     #[test]
@@ -615,7 +728,6 @@ mod tests {
         .assert_eq(&cps(LAMBDA));
     }
 
-    // TODO Debug: x = Var(4) seems incorrect.
     #[test]
     fn complicated() {
         expect![[r#"

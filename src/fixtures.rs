@@ -15,9 +15,25 @@ b
 "#;
 
 pub(crate) const BINDING: &str = r#"
-(let (1 0) (let (1 0) a))
+(let (f (fn (x) x))
+  (let (g (fn (y) y))
+    a))
 "#;
 
+pub(crate) const SHADOW: &str = r#"
+(record
+  (f x)
+  (let (f (fn (x) (x f))
+        g (fn (g) (g x)))
+    (f g))
+  (f x))
+"#;
+
+pub(crate) const LET_SHADOW: &str = r#"
+(let (f (fn (x) (f x))
+      f (fn (f) (f x)))
+  f)
+"#;
 
 pub(crate) const APPLY: &str = r#"
 (a b c)
@@ -47,25 +63,25 @@ pub(crate) const RECORD_SELECT: &str = r#"
 "#;
 
 pub(crate) const LAMBDA: &str = r#"
-(fn (3) (0 1 2))
+(fn (x y z) (z y x))
 "#;
 
 pub(crate) const COMPLICATED: &str = r#"
-(let (2 (select 2 1))
-  (let (2 (select 3 0))
-    (record x (1 y (select 4 z)))))
+(let (f (fn (x y) (select 2 x)))
+  (let (g (fn (x y) (select 3 y)))
+    (record x (f y (select 4 z)))))
 "#;
 
 pub(crate) const LOOP: &str = r#"
-(let (1 (1 (select 0 0))) 0)
+(let (f (fn (x) (f (select 0 x)))) f)
 "#;
-
 
 pub(crate) const CO_RECURSIVE: &str = r#"
-(let (1 (1 0) 1 (2 0)) 1)
+(let (f (fn (x) (g x))
+      g (fn (x) (f x)))
+  f)
 "#;
 
-
 pub(crate) const ALREADY_CPS: &str = r#"
-(let (2 (0 1)) 0)
+(let (f (fn (x k) (k x))) f)
 "#;
