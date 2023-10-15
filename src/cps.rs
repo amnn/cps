@@ -56,7 +56,7 @@ use crate::naming as N;
 /// application (the last two fields), either from a function call in the input AST, or a
 /// continuation call.
 #[derive(PartialEq, Eq, Debug)]
-pub(crate) struct Ast(Vec<Cmd>, Var, Vec<Var>);
+pub(crate) struct Ast<'b>(Vec<Cmd<'b>>, Var, Vec<Var>);
 
 /// Variables are represented by de-Bruijn indices.  They are used to refer to both function
 /// parameters and locals/temporaries.
@@ -66,13 +66,13 @@ pub(crate) struct Var(usize);
 /// Commands are the "right-hand side" of binders, they produce values that get bound to variables
 /// in the [Ast].
 #[derive(PartialEq, Eq)]
-pub(crate) enum Cmd {
+pub(crate) enum Cmd<'b> {
     /// Load a free/global variable.
-    Free(String),
+    Free(&'b str),
 
     /// Bind co-recursive functions.  This command binds multiple values (as many as the lambdas it
     /// binds) and they are bound within each lambda, and for the continuation of the [Ast].
-    Fix(Vec<Lam>),
+    Fix(Vec<Lam<'b>>),
 
     /// Construct a tuple.
     Record(Vec<Var>),
@@ -83,7 +83,7 @@ pub(crate) enum Cmd {
 
 /// A lambda is defined by the number of parameters it has, and its body.
 #[derive(PartialEq, Eq)]
-pub(crate) struct Lam(usize, Ast);
+pub(crate) struct Lam<'b>(usize, Ast<'b>);
 
 /// Bound variables are represented by an index counting down from the first binding (as opposed to
 /// Vars which is a de-Bruijn index and counts up from the last binding).  These are used to refer
@@ -93,11 +93,11 @@ pub(crate) struct Lam(usize, Ast);
 struct BVar(usize);
 
 #[derive(Debug)]
-pub(crate) struct Cps {
+pub(crate) struct Cps<'b> {
     /// Partially built functions, nested in successive lexical scopes in the contified AST.  New
     /// commands are appended to the top-most frame, and frames are popped off the stack and
     /// converted into `Lam`s when they have been completed.
-    frames: Vec<Frame>,
+    frames: Vec<Frame<'b>>,
 
     /// A mapping from local variables in the input AST to bound variables in the contified AST
     /// (used when contifying local variables in the input AST).
@@ -106,7 +106,7 @@ pub(crate) struct Cps {
 
 /// Frames correspond to a function in the contified AST that has been partially built.
 #[derive(Debug)]
-struct Frame {
+struct Frame<'b> {
     /// If this frame is a continuation function, its caller is included here.
     caller: Option<(BVar, Vec<BVar>)>,
 
@@ -123,12 +123,12 @@ struct Frame {
     params: usize,
 
     /// Local commands being accumulated for the body of this function, so far.
-    locals: Vec<Cmd>,
+    locals: Vec<Cmd<'b>>,
 }
 
-impl Cps {
+impl<'b> Cps<'b> {
     /// Entrypoint: convert an input AST into a contified AST.
-    pub(crate) fn convert(from: N::Ast) -> Ast {
+    pub(crate) fn convert(from: N::Ast<'b>) -> Ast<'b> {
         let mut cps = Cps {
             frames: vec![],
             frm_vars: vec![],
@@ -137,7 +137,7 @@ impl Cps {
         // Introduce a special frame to hold a distinguished `HALT` free variable -- the "final"
         // continuation.
         cps.enter(0, 0, None);
-        let halt = cps.push(Cmd::Free("HALT".to_owned()))[0];
+        let halt = cps.push(Cmd::Free("HALT"))[0];
 
         cps.body(from, halt).1
     }
@@ -145,7 +145,7 @@ impl Cps {
     /// Create a contified lambda with body translated from AST `from`. `k` is the parameter
     /// containing the continuation that the lambda should return to.  Assumes that the lambda's
     /// frame has already been set-up, before `body` is called.
-    fn body(&mut self, from: N::Ast, k: BVar) -> Lam {
+    fn body(&mut self, from: N::Ast<'b>, k: BVar) -> Lam<'b> {
         // If the body is already a function application, then avoid creating a redundant
         // continuation just to call `k` with the result of application: Use the function being
         // called in `from` as the continuation.
@@ -196,10 +196,10 @@ impl Cps {
 
     /// Translate `from`, accumulating the intermediate results in `self`.  Returns the bound
     /// variable used to refer to the result corresponding to `from`.
-    fn bind(&mut self, from: N::Ast) -> BVar {
+    fn bind(&mut self, from: N::Ast<'b>) -> BVar {
         use Cmd as C;
         match from {
-            N::Ast::Free(x) => self.push(C::Free(x.to_string()))[0],
+            N::Ast::Free(x) => self.push(C::Free(x))[0],
             N::Ast::Var(ix) => self.frm_var(ix),
 
             N::Ast::Let(binds, body) => {
@@ -251,7 +251,7 @@ impl Cps {
     }
 
     /// Translate a lambda in the input AST into a contified lambda.
-    fn lambda(&mut self, l: N::Lam) -> Lam {
+    fn lambda(&mut self, l: N::Lam<'b>) -> Lam<'b> {
         let N::Lam(formals, body) = l;
         self.enter(formals, 1, None);
         let k = self.cps_var(formals);
@@ -285,7 +285,7 @@ impl Cps {
 
     /// Push the command to the top-most frame.  This adds the command and also registers its
     /// results as locals on the stack.
-    fn push(&mut self, cmd: Cmd) -> Vec<BVar> {
+    fn push(&mut self, cmd: Cmd<'b>) -> Vec<BVar> {
         self.frames
             .last_mut()
             .expect("ICE: no frame to push to.")
@@ -314,14 +314,14 @@ impl Cps {
         });
     }
 
-    fn exit(&mut self) -> Frame {
+    fn exit(&mut self) -> Frame<'b> {
         let frame = self.frames.pop().expect("ICE: no frame to pop.");
         self.frm_vars.truncate(frame.frm_bp);
         frame
     }
 }
 
-impl Frame {
+impl<'b> Frame<'b> {
     fn cps_var(&self, mut ix: usize) -> BVar {
         ix += self.cps_bp;
         debug_assert!(ix < self.cps_sp);
@@ -332,7 +332,7 @@ impl Frame {
         Var(self.cps_sp - ix - 1)
     }
 
-    fn push(&mut self, cmd: Cmd) -> Vec<BVar> {
+    fn push(&mut self, cmd: Cmd<'b>) -> Vec<BVar> {
         use Cmd as C;
         let results = match &cmd {
             C::Free(_) | C::Record(_) | C::Select(_, _) => 1,
@@ -352,7 +352,7 @@ impl fmt::Debug for Var {
     }
 }
 
-impl fmt::Debug for Cmd {
+impl<'b> fmt::Debug for Cmd<'b> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         use Cmd as C;
         match self {
@@ -369,7 +369,7 @@ impl fmt::Debug for Cmd {
     }
 }
 
-impl fmt::Debug for Lam {
+impl<'b> fmt::Debug for Lam<'b> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         let Lam(params, ast) = self;
         if fmt.alternate() {
