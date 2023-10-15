@@ -1,3 +1,22 @@
+//! # Parser
+//!
+//! Parses the following grammar:
+//!
+//!  expr    ::= "(" "let" "(" binds ")" expr ")"
+//!            | lambda
+//!            | "(" "record" expr* ")"
+//!            | "(" "select" <Int> expr ")"
+//!            | "(" expr+ ")" ;; function application
+//!            | <Word>        ;; variables
+//!
+//!  binds  ::= binds bind | ε
+//!  bind   ::= <Word> lambda
+//!
+//!  lambda ::= "(" "fn" "(" <Word>* ")" expr ")"
+//!
+//! The resulting `Ast<'b>` borrows strings representing keywords and variable names from the
+//! original source buffer, with lifetime, `'b`.
+
 use std::{fmt, iter::Peekable};
 
 use crate::lex::{Lexer, Token};
@@ -26,19 +45,6 @@ type Result<'b, T> = std::result::Result<T, Error<'b>>;
 #[derive(Debug)]
 pub(crate) struct Parser<'b>(Peekable<Lexer<'b>>);
 
-/// Parses the following grammar
-///
-/// expr    ::= "(" "let" "(" binds ")" expr ")"
-///           | lambda
-///           | "(" "record" expr* ")"
-///           | "(" "select" <Int> expr ")"
-///           | "(" expr+ ")" ;; function application
-///           | <Word>        ;; variables
-///
-/// binds  ::= binds bind | ε
-/// bind   ::= <Word> lambda
-///
-/// lambda ::= "(" "fn" "(" <Word>* ")" expr ")"
 impl<'b> Parser<'b> {
     /// Entrypoint: Convert a token stream into an AST.
     pub(crate) fn parse(tokens: Lexer<'b>) -> Result<'b, Ast<'b>> {

@@ -1,6 +1,62 @@
+//! # CPS
+//!
+//! Continuation-passing style conversion on a direct-style de-Bruijn indexed input AST.  The
+//! resulting representation of the program is simplified w.r.t. its input in the following ways:
+//!
+//! - Complex expressions are replaced by a sequence of simple expressions (with no nesting) that
+//!   bind intermediate results.  Simple expressions are easier to lower into machine operations,
+//!   and the sequencing makes evaluation order explicit.
+//!
+//! - Lambdas can no longer appear as expressions, they must first be bound (given a "name"), and
+//!   referred to by that name.
+//!
+//! - References to local variables are no longer expressions in their own right -- they can only
+//!   appear as inputs to other simple expressions.
+//!
+//!
+//! ## Bindings
+//!
+//! A `Var` in the output AST can refer to either a binding in the input AST, or a newly introduced
+//! binding for a continuation parameter, or an intermediate result.  These references are still in
+//! terms of de-Bruijn indices but they will be renumbered relative to the input AST to account for
+//! the new bindings that the pass introduces.
+//!
+//! `Command`s implicitly introduce bindings for following commands, and lambdas nested within those
+//! commands.  Most commands introduce only one binding -- for their result -- but `Fix` can
+//! introduce multiple (one for each expression being bound).
+//!
+//!
+//! ## Administrative Redexes
+//!
+//! To avoid a representation that includes many administrative redexes, a program is represented by
+//! a sequence of `Command`s followed by a continuation call where commands are simple operations
+//! that bind new values (references to globals, introducing lambdas, constructing and destructing
+//! tuples) without introducing control flow.
+//!
+//! The continuation call at the end of a program can either be from an existing application in the
+//! input AST, or the application of a newly introduced continuation parameter (corresponding to a
+//! return of a value introduced by a command in the input AST).
+//!
+//! This also means that the pass avoids introducing a redundant continuation (and another
+//! administrative redex) to return the result of another function application.  Instead, it
+//! preserves the function call in question as the tail call, and updates its continuation
+//! parameter.
+//!
+//!
+//! ## HALT
+//!
+//! The pass introduces a special global variable: "HALT" to represent the continuation to exit the
+//! program with its return value (Like the return value of `main`).
+
 use std::{fmt, iter};
 
 use crate::naming as N;
+
+/// An AST contains a sequence of commands which bind temporaries, followed by a function
+/// application (the last two fields), either from a function call in the input AST, or a
+/// continuation call.
+#[derive(PartialEq, Eq, Debug)]
+pub(crate) struct Ast(Vec<Cmd>, Var, Vec<Var>);
 
 /// Variables are represented by de-Bruijn indices.  They are used to refer to both function
 /// parameters and locals/temporaries.
@@ -28,12 +84,6 @@ pub(crate) enum Cmd {
 /// A lambda is defined by the number of parameters it has, and its body.
 #[derive(PartialEq, Eq)]
 pub(crate) struct Lam(usize, Ast);
-
-/// An AST contains a sequence of commands which bind temporaries, followed by a function
-/// application (the last two fields), either from a function call in the input AST, or a
-/// continuation call.
-#[derive(PartialEq, Eq, Debug)]
-pub(crate) struct Ast(Vec<Cmd>, Var, Vec<Var>);
 
 /// Bound variables are represented by an index counting down from the first binding (as opposed to
 /// Vars which is a de-Bruijn index and counts up from the last binding).  These are used to refer

@@ -1,3 +1,24 @@
+//! # Naming
+//!
+//! Replaces named bindings with de-Bruijn indices.  This simplifies the work of following passes
+//! that may need to generate fresh bindings.  Such passes now no longer need to worry about
+//! generating fresh symbols to avoid shadowing etc.
+//!
+//! This pass does not fail, but will leave references to variables that aren't under a binder as
+//! `Free` variables.
+//!
+//! The resulting `Ast<'b>` differs from its input (`P::Ast<'b>`) in the following ways:
+//!
+//! - `P::Ast::Var(&'b str)` is split into `Ast::Var(usize)` and `Ast::Free(&'b str)`.  The former
+//!   represents a local variable `v` whose binder is nested `v.0` many binders away.  The latter
+//!   represents a free/global variable that wasn't introduced by a binder in this program.
+//!
+//! - `P::Ast::Let` loses all references to the names of the bindings it introduces.  They are
+//!   simply represented as a list of the bindings' values (Order is preserved from the input AST).
+//!
+//! - `P::Lam`'s list of parameters is reduced to a parameter count, again preserving the order of
+//!   parameters.
+
 use std::{collections::HashMap, fmt};
 
 use crate::parse as P;
@@ -16,9 +37,18 @@ pub(crate) enum Ast<'b> {
 #[derive(Eq, PartialEq, Clone)]
 pub(crate) struct Lam<'b>(pub usize, pub Ast<'b>);
 
+/// Represents the state of the environment: The current bindings in scope, and any that have been
+/// shadowed.
 #[derive(Default, Debug)]
 pub(crate) struct ScopeChain<'b> {
+    /// Mapping in-scope variables to the index of their binder.  This index is absolute (i.e. not a
+    /// de-Bruijn index), so that existing entries do not need to be updated when a new binder is
+    /// introduced.
     local_to_ix: HashMap<&'b str, usize>,
+
+    /// Metadata about a particular binder: Its name (a reverse mapping for `local_to_ix`) and the
+    /// index of a previous binding for the same name that this binding shadows.  If this binding
+    /// does not shadow any other, then this index points to itself.
     ix_to_local: Vec<Node<'b>>,
 }
 
@@ -28,6 +58,7 @@ struct Node<'b> {
     prev: usize,
 }
 
+/// Entrypoint
 pub(crate) fn pass(from: P::Ast) -> Ast {
     let mut env = ScopeChain::default();
     expr(&mut env, from)

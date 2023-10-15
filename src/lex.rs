@@ -1,3 +1,8 @@
+//! # Lexer
+//!
+//! Incrementally tokenises the source language -- provided as a `&str` -- to produce an iterator of
+//! `Token`s.  The tokenizer consumes and ignores whitespace (including commas, and line comments).
+
 use std::{iter::Peekable, str::CharIndices};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
