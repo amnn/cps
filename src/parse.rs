@@ -45,19 +45,19 @@ type Result<'b, T> = std::result::Result<T, Error<'b>>;
 #[derive(Debug)]
 pub(crate) struct Parser<'b>(Peekable<Lexer<'b>>);
 
-impl<'b> Parser<'b> {
-    /// Entrypoint: Convert a token stream into an AST.
-    pub(crate) fn parse(tokens: Lexer<'b>) -> Result<'b, Ast<'b>> {
-        let mut parser = Self(tokens.peekable());
+/// Entrypoint: Convert a token stream into an AST
+pub(crate) fn pass(tokens: Lexer) -> Result<Ast> {
+    let mut parser = Parser(tokens.peekable());
 
-        let ast = parser.expr()?;
-        if let Ok(t) = parser.peek() {
-            Err(Error::Unexpected(*t))
-        } else {
-            Ok(ast)
-        }
+    let ast = parser.expr()?;
+    if let Ok(t) = parser.peek() {
+        Err(Error::Unexpected(*t))
+    } else {
+        Ok(ast)
     }
+}
 
+impl<'b> Parser<'b> {
     fn expr(&mut self) -> Result<'b, Ast<'b>> {
         use Token as T;
 
@@ -237,13 +237,13 @@ impl<'b> fmt::Display for Error<'b> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::fixtures::*;
+    use crate::{fixtures::*, lex};
     use expect_test::expect;
 
     fn parse<'b>(buf: &'b str) -> String {
-        let tokens = Lexer::new(buf);
-        format!("{:#?}\n", Parser::parse(tokens))
+        let toks = lex::pass(buf);
+        let astp = super::pass(toks);
+        format!("{astp:#?}\n")
     }
 
     #[test]

@@ -19,14 +19,14 @@ pub(crate) struct Lexer<'b> {
     cursor: Peekable<CharIndices<'b>>,
 }
 
-impl<'b> Lexer<'b> {
-    pub(crate) fn new(buf: &'b str) -> Self {
-        Lexer {
-            buf,
-            cursor: buf.char_indices().peekable(),
-        }
+pub(crate) fn pass(buf: &str) -> Lexer {
+    Lexer {
+        buf,
+        cursor: buf.char_indices().peekable(),
     }
+}
 
+impl<'b> Lexer<'b> {
     fn eat(&mut self, pred: impl Fn(char) -> bool) -> Option<usize> {
         loop {
             let (ix, c) = self.cursor.peek()?;
@@ -87,12 +87,11 @@ fn is_ident_rest(c: char) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::fixtures::*;
     use expect_test::expect;
 
     fn lex<'b>(buf: &'b str) -> String {
-        Lexer::new(buf)
+        super::pass(buf)
             .map(|t| format!("{t:?}\n"))
             .collect::<Vec<_>>()
             .join("")

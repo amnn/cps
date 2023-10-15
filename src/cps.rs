@@ -126,22 +126,22 @@ struct Frame<'b> {
     locals: Vec<Cmd<'b>>,
 }
 
+/// Entrypoint
+pub(crate) fn pass(from: N::Ast) -> Ast {
+    let mut cps = Cps {
+        frames: vec![],
+        frm_vars: vec![],
+    };
+
+    // Introduce a special frame to hold a distinguished `HALT` free variable -- the "final"
+    // continuation.
+    cps.enter(0, 0, None);
+    let halt = cps.push(Cmd::Free("HALT"))[0];
+
+    cps.body(from, halt).1
+}
+
 impl<'b> Cps<'b> {
-    /// Entrypoint: convert an input AST into a contified AST.
-    pub(crate) fn convert(from: N::Ast<'b>) -> Ast<'b> {
-        let mut cps = Cps {
-            frames: vec![],
-            frm_vars: vec![],
-        };
-
-        // Introduce a special frame to hold a distinguished `HALT` free variable -- the "final"
-        // continuation.
-        cps.enter(0, 0, None);
-        let halt = cps.push(Cmd::Free("HALT"))[0];
-
-        cps.body(from, halt).1
-    }
-
     /// Create a contified lambda with body translated from AST `from`. `k` is the parameter
     /// containing the continuation that the lambda should return to.  Assumes that the lambda's
     /// frame has already been set-up, before `body` is called.
@@ -383,17 +383,16 @@ impl<'b> fmt::Debug for Lam<'b> {
 #[cfg(test)]
 mod tests {
     use crate::fixtures::*;
-    use crate::{lex::Lexer, naming, parse::Parser};
+    use crate::{lex, naming, parse};
 
-    use super::*;
     use expect_test::expect;
 
     fn cps<'b>(buf: &'b str) -> String {
-        let tokens = Lexer::new(buf);
-        let pexpr = Parser::parse(tokens).expect("parsing should succeed");
-        let nexpr = naming::pass(pexpr);
-        let cexpr = Cps::convert(nexpr);
-        format!("{cexpr:#?}\n")
+        let toks = lex::pass(buf);
+        let astp = parse::pass(toks).expect("parsing should succeed");
+        let astn = naming::pass(astp);
+        let astc = super::pass(astn);
+        format!("{astc:#?}\n")
     }
 
     #[test]

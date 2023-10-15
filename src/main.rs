@@ -2,9 +2,6 @@ use std::{collections::HashSet, process::exit};
 
 use clap::{Parser as Clap, ValueEnum};
 use clap_stdin::FileOrStdin;
-use cps::Cps;
-use lex::Lexer;
-use parse::Parser;
 
 mod cps;
 mod lex;
@@ -42,34 +39,34 @@ fn main() {
     let args = Args::parse();
     let debug_phases: HashSet<_> = args.dump.iter().copied().collect();
 
-    let lex = Lexer::new(&args.input);
+    let toks = lex::pass(&args.input);
     if debug_phases.contains(&Phase::Lexer) {
         println!("Tokens:");
-        for token in lex.clone() {
+        for token in toks.clone() {
             println!("{token:?}");
         }
         println!("\n");
     }
 
-    let ast = match Parser::parse(lex) {
+    let astp = match parse::pass(toks) {
         Ok(ast) => ast,
         Err(err) => {
             eprintln!("Error parsing input: {err}");
-            exit(4);
+            exit(1);
         }
     };
 
     if debug_phases.contains(&Phase::Parser) {
-        println!("AST: {ast:#?}\n");
+        println!("AST: {astp:#?}\n");
     }
 
-    let dbj = naming::pass(ast);
+    let astn = naming::pass(astp);
     if debug_phases.contains(&Phase::Naming) {
-        println!("Naming: {dbj:#?}\n");
+        println!("Naming: {astn:#?}\n");
     }
 
-    let cps = Cps::convert(dbj);
+    let astc = cps::pass(astn);
     if debug_phases.contains(&Phase::Cps) {
-        println!("CPS: {cps:#?}\n");
+        println!("CPS: {astc:#?}\n");
     }
 }

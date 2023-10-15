@@ -183,15 +183,14 @@ fn lambda<'b>(env: &mut ScopeChain<'b>, from: P::Lam<'b>) -> Lam<'b> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{fixtures::*, lex::Lexer, parse::Parser};
+    use crate::{fixtures::*, lex, parse};
     use expect_test::expect;
 
     fn naming<'b>(buf: &'b str) -> String {
-        let tokens = Lexer::new(buf);
-        let pexpr = Parser::parse(tokens).expect("parsing should succeed");
-        let nexpr = pass(pexpr);
-        format!("{nexpr:#?}\n")
+        let toks = lex::pass(buf);
+        let astp = parse::pass(toks).expect("parsing should succeed");
+        let astn = super::pass(astp);
+        format!("{astn:#?}\n")
     }
 
     #[test]
